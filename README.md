@@ -45,7 +45,7 @@ docker run -d \
   --name tg-upload-manager \
   -p 8000:8000 \
   -v $PWD/data:/app/data \
-  -v $PWD/sample-media:/media/inbox \
+  -v $PWD/sample-media:/media \
   ghcr.io/wxxvc/tgup:latest
 ```
 
