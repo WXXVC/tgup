@@ -754,6 +754,11 @@ button:disabled {
   align-items: start;
 }
 
+.item-top > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
 .item-top h3,
 .item-top p {
   margin: 0;
@@ -1167,12 +1172,13 @@ button:disabled {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex: none;
 }
 
 .upload-task-item h3 {
   font-size: 14px;
   line-height: 1.35;
-  word-break: break-word;
+  word-break: normal;
 }
 
 .upload-task-item .muted {
@@ -1182,19 +1188,31 @@ button:disabled {
 .marquee-wrap {
   display: block;
   width: 100%;
+  max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .marquee-content {
   display: inline-block;
-  min-width: 100%;
+  min-width: max-content;
+  padding-right: 2px;
   transform: translateX(0);
   will-change: transform;
 }
 
 .marquee-wrap.is-overflowing:hover .marquee-content {
   animation: marquee-slide 6s linear infinite alternate;
+}
+
+.truncate-text {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .upload-task-meta {
@@ -1260,6 +1278,21 @@ button:disabled {
   position: absolute;
   top: 10px;
   right: 10px;
+}
+
+.file-card > .toggle {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  padding-top: 0;
+  padding-right: 70px;
+  margin-bottom: 8px;
+}
+
+.file-card > .toggle .marquee-wrap {
+  flex: 1;
+  min-width: 0;
 }
 
 .file-card .preview {
@@ -1682,27 +1715,34 @@ dialog::backdrop {
 }
 
 .task-detail-toolbar {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   margin-bottom: 12px;
 }
 
 #task-detail-dialog .preview-close {
   margin-left: auto;
-  min-height: 42px;
-  min-width: 96px;
+  min-height: 36px;
+  min-width: 84px;
+  padding: 7px 16px;
 }
 
 #task-detail-dialog .dialog-toolbar {
+  display: flex;
+  width: 100%;
+  align-items: center;
   justify-content: flex-start;
   gap: 8px;
   margin-bottom: 0;
+  flex-wrap: nowrap;
 }
 
 #task-detail-dialog .dialog-toolbar .ghost {
-  min-height: 36px;
-  padding: 7px 14px;
+  min-height: 34px;
+  padding: 6px 12px;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .detail-subtask-item p {

@@ -276,7 +276,7 @@ export function renderUploads() {
       <article class="item upload-task-item upload-task-item-${task.status}" data-task-id="${task.id}">
         <div class="item-top">
           <div>
-            <h3 class="marquee-wrap" data-marquee><span class="marquee-content" data-marquee-content>${escapeHtml(task.relative_path)}</span></h3>
+            <h3 class="truncate-text" title="${escapeHtml(task.relative_path)}">${escapeHtml(task.relative_path)}</h3>
             <p class="muted">${escapeHtml(taskBatchSummary(task))}</p>
           </div>
           <div class="upload-task-top-actions">
