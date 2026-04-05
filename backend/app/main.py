@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
@@ -36,6 +37,7 @@ telegram = TelegramSessionManager()
 scanner = FolderScanner(upload_repo)
 upload_manager = UploadManager(settings_service, upload_repo, scanner, telegram)
 ACCESS_COOKIE_NAME = "tgup_access"
+APP_DISPLAY_VERSION = "0.1.0"
 
 
 @asynccontextmanager
@@ -60,6 +62,19 @@ frontend_dir = Path(__file__).resolve().parents[2] / "frontend"
 static_dir = frontend_dir / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+@lru_cache(maxsize=1)
+def frontend_template() -> str:
+    return (frontend_dir / "index.html").read_text(encoding="utf-8")
+
+
+def frontend_asset_version() -> str:
+    candidates = [frontend_dir / "index.html"]
+    if static_dir.exists():
+        candidates.extend(path for path in static_dir.rglob("*") if path.is_file())
+    latest_mtime_ns = max(path.stat().st_mtime_ns for path in candidates if path.exists())
+    return str(latest_mtime_ns)
 
 
 def is_public_path(path: str) -> bool:
@@ -91,7 +106,19 @@ async def access_password_guard(request: Request, call_next):
 async def index():
     if not (frontend_dir / "index.html").exists():
         raise HTTPException(status_code=404, detail="frontend not found")
-    return FileResponse(frontend_dir / "index.html")
+    content = (
+        frontend_template()
+        .replace("__APP_ASSET_VERSION__", frontend_asset_version())
+        .replace("__APP_DISPLAY_VERSION__", APP_DISPLAY_VERSION)
+    )
+    return HTMLResponse(
+        content=content,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/api/settings")

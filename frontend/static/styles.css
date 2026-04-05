@@ -111,10 +111,19 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 10px;
+  gap: 12px;
   padding: 8px 12px;
   border-radius: 16px;
   min-height: 72px;
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 .brand-mark {
@@ -127,6 +136,22 @@ select:focus-visible {
   color: #fff;
   background: linear-gradient(135deg, var(--accent), #da8a52);
   box-shadow: 0 10px 24px rgba(181, 84, 45, 0.18);
+  flex: none;
+}
+
+.brand-version {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(105, 78, 49, 0.12);
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   flex: none;
 }
 

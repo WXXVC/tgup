@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TG Upload Manager</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=__APP_ASSET_VERSION__">
 </head>
 <body>
   <div id="access-screen" class="access-screen hidden">
@@ -22,7 +22,8 @@
     <div class="topbar-inner">
       <div class="topbar-brand">
         <div class="brand-mark" aria-hidden="true">TG</div>
-        <div>
+        <div class="brand-copy">
+          <span class="brand-version">v__APP_DISPLAY_VERSION__</span>
           <h1>控制台</h1>
         </div>
         <button id="refresh-all" class="ghost" type="button">刷新</button>
@@ -404,6 +405,6 @@
     <div id="task-detail-body"></div>
   </dialog>
 
-  <script type="module" src="/static/app.js"></script>
+  <script type="module" src="/static/app.js?v=__APP_ASSET_VERSION__"></script>
 </body>
 </html>
