@@ -4,6 +4,7 @@ import {
   api,
   escapeHtml,
   formatDateTime,
+  initOverflowMarquee,
   labeledBadge,
   pushToast,
   setPanelFeedback,
@@ -275,7 +276,7 @@ export function renderUploads() {
       <article class="item upload-task-item upload-task-item-${task.status}" data-task-id="${task.id}">
         <div class="item-top">
           <div>
-            <h3>${escapeHtml(task.relative_path)}</h3>
+            <h3 class="marquee-wrap" data-marquee><span class="marquee-content" data-marquee-content>${escapeHtml(task.relative_path)}</span></h3>
             <p class="muted">${escapeHtml(taskBatchSummary(task))}</p>
           </div>
           <div class="upload-task-top-actions">
@@ -298,6 +299,7 @@ export function renderUploads() {
       </article>
     `).join("")}</div>`
     : `<p class="muted">当前筛选条件下没有任务。</p>`;
+  initOverflowMarquee(container);
 }
 
 export async function syncUploadProgress() {

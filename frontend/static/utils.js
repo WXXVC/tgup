@@ -134,3 +134,18 @@ export function taskSkeleton(count = 4) {
 export function formatDateTime(timestamp) {
   return new Date(timestamp * 1000).toLocaleString();
 }
+
+export function initOverflowMarquee(root = document) {
+  const nodes = root.querySelectorAll("[data-marquee]");
+  nodes.forEach((node) => {
+    const content = node.querySelector("[data-marquee-content]");
+    if (!content) return;
+    node.classList.remove("is-overflowing");
+    content.style.removeProperty("--marquee-distance");
+    const overflow = Math.ceil(content.scrollWidth - node.clientWidth);
+    if (overflow > 4) {
+      node.classList.add("is-overflowing");
+      content.style.setProperty("--marquee-distance", `${overflow}px`);
+    }
+  });
+}

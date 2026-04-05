@@ -5,6 +5,7 @@ import {
   fileSkeleton,
   fileTypeLabel,
   formatBytes,
+  initOverflowMarquee,
   labeledBadge,
   setPanelFeedback,
 } from "./utils.js";
@@ -227,7 +228,7 @@ function renderDirectoryTree() {
             ? `<span class="tree-node-toggle ${node.isCollapsed ? "collapsed" : ""}" data-tree-toggle="${escapeHtml(node.path)}" aria-hidden="true"></span>`
             : `<span class="tree-node-toggle spacer" aria-hidden="true"></span>`}
           <span class="tree-node-folder" aria-hidden="true"></span>
-          <span class="tree-node-label">${escapeHtml(node.path.split("/").at(-1) || node.path)}</span>
+          <span class="tree-node-label" title="${escapeHtml(node.path)}">${escapeHtml(node.path.split("/").at(-1) || node.path)}</span>
         </span>
         <small>${node.count}</small>
       </button>
@@ -347,7 +348,7 @@ export function renderFiles() {
         <div class="file-card-status">${labeledBadge(file.status)}</div>
         <label class="toggle">
           <input type="checkbox" data-file-select="${escapeHtml(file.relative_path)}" ${state.selectedFiles.has(file.relative_path) ? "checked" : ""}>
-          <span>${escapeHtml(file.relative_path)}</span>
+          <span class="marquee-wrap" data-marquee><span class="marquee-content" data-marquee-content>${escapeHtml(file.relative_path)}</span></span>
         </label>
         <button class="preview" data-preview="${escapeHtml(file.relative_path)}">
           ${previewMarkup(file)}
@@ -367,12 +368,13 @@ export function renderFiles() {
           </div>
           <div>
             <strong>路径层级</strong>
-            <span>${escapeHtml(file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join(" / ") : "根目录")}</span>
+            <span class="marquee-wrap" data-marquee><span class="marquee-content" data-marquee-content>${escapeHtml(file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join(" / ") : "根目录")}</span></span>
           </div>
         </div>
       </article>
     `).join("")
     : `<p class="muted">当前筛选条件下没有文件。</p>`;
+  initOverflowMarquee(container);
 }
 
 export async function loadFiles(folderId, resetSelection = true) {
