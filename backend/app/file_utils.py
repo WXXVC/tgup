@@ -1,0 +1,64 @@
+from __future__ import annotations
+import re
+from pathlib import Path
+
+from .models import UploadStatus
+
+
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+MUSIC_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"}
+DOCUMENT_EXTENSIONS = {
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".txt",
+    ".md",
+    ".zip",
+    ".rar",
+    ".7z",
+}
+
+
+def classify_file(path: Path) -> str:
+    extension = path.suffix.lower()
+    if extension in VIDEO_EXTENSIONS:
+        return "video"
+    if extension in IMAGE_EXTENSIONS:
+        return "image"
+    if extension in MUSIC_EXTENSIONS:
+        return "music"
+    if extension in DOCUMENT_EXTENSIONS:
+        return "document"
+    return "other"
+
+
+def build_caption(root: Path, file_path: Path) -> str:
+    relative = file_path.relative_to(root)
+    tags = []
+    for part in relative.parts[:-1]:
+        tag = re.sub(r"[^0-9A-Za-z_\u4e00-\u9fff]+", "_", part).strip("_")
+        if tag:
+            tags.append(f"#{tag}")
+    name = file_path.stem
+    return " ".join([*tags, name]).strip()
+
+
+def file_is_locked(path: Path) -> bool:
+    try:
+        with open(path, "rb+"):
+            return False
+    except OSError:
+        return True
+
+
+def derive_status(is_uploaded: bool, is_locked_flag: bool) -> UploadStatus:
+    if is_locked_flag:
+        return UploadStatus.LOCKED
+    if is_uploaded:
+        return UploadStatus.UPLOADED
+    return UploadStatus.PENDING

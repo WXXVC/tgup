@@ -1,0 +1,10 @@
+services:
+  tg-upload-manager:
+    build: .
+    container_name: tg-upload-manager
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./sample-media:/media/inbox
+    restart: unless-stopped

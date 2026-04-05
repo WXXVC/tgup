@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TG Upload Manager</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Telegram Upload Manager</p>
+        <h1>登录、监控、浏览、上传一页完成</h1>
+        <p class="hero-copy">围绕第三版提示词的主流程做了一版可运行 MVP，优先保证登录恢复、目录扫描、手动上传和任务状态闭环。</p>
+        <div class="hero-actions">
+          <button id="refresh-all" class="ghost" type="button">刷新全部</button>
+          <span class="hero-hint">支持目录浏览、手动上传、任务重试与状态追踪</span>
+        </div>
+      </div>
+      <div class="hero-status">
+        <span class="label">登录状态</span>
+        <strong id="login-stage">加载中</strong>
+        <span id="login-error" class="muted"></span>
+        <span id="global-status" class="muted" aria-live="polite"></span>
+      </div>
+    </header>
+
+    <section id="global-banner" class="global-banner hidden" aria-live="polite"></section>
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+    <main class="grid">
+      <section class="card">
+        <div class="section-head">
+          <h2>Telegram 登录</h2>
+          <span class="section-note">登录态与会话自动持久化</span>
+        </div>
+        <form id="api-form" class="stack">
+          <label>
+            <span>API ID</span>
+            <input id="api-id" name="api_id" type="number" required>
+          </label>
+          <label>
+            <span>API Hash</span>
+            <input id="api-hash" name="api_hash" required>
+          </label>
+          <label>
+            <span>手机号</span>
+            <input id="phone-number" name="phone_number" required>
+          </label>
+          <div class="actions">
+            <button type="submit">开始登录</button>
+          </div>
+        </form>
+        <form id="code-form" class="inline-form">
+          <input id="code-input" placeholder="验证码">
+          <button type="submit">提交验证码</button>
+        </form>
+        <form id="password-form" class="inline-form">
+          <input id="password-input" type="password" placeholder="二次验证密码">
+          <button type="submit">提交密码</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>频道配置</h2>
+        </div>
+        <form id="channel-form" class="stack">
+          <input id="channel-id" type="hidden">
+          <label>
+            <span>频道名称</span>
+            <input id="channel-name" required>
+          </label>
+          <label>
+            <span>频道标识</span>
+            <input id="channel-target" placeholder="@channel_name 或 -100..." required>
+          </label>
+          <label class="toggle">
+            <input id="channel-enabled" type="checkbox" checked>
+            <span>启用频道</span>
+          </label>
+          <div class="actions">
+            <button type="submit">保存频道</button>
+            <button type="button" id="channel-reset" class="ghost">清空</button>
+          </div>
+        </form>
+        <div id="channel-list" class="list"></div>
+      </section>
+
+      <section class="card wide">
+        <div class="section-head">
+          <h2>监控目录配置</h2>
+        </div>
+        <form id="folder-form" class="folder-form">
+          <input id="folder-id" type="hidden">
+          <label>
+            <span>名称</span>
+            <input id="folder-name" required>
+          </label>
+          <label>
+            <span>路径</span>
+            <input id="folder-path" placeholder="F:\media\movies 或 /media/movies" required>
+          </label>
+          <label>
+            <span>目标频道</span>
+            <select id="folder-channel" required></select>
+          </label>
+          <label>
+            <span>扫描频率(秒)</span>
+            <input id="folder-interval" type="number" min="5" max="3600" value="30" required>
+          </label>
+          <label>
+            <span>上传后处理</span>
+            <select id="folder-action">
+              <option value="keep">保留原文件</option>
+              <option value="delete">删除原文件</option>
+              <option value="move">移动到目标目录</option>
+            </select>
+          </label>
+          <label>
+            <span>移动目标路径</span>
+            <input id="folder-move-target" placeholder="仅当处理策略为 move 时需要">
+          </label>
+          <label class="toggle">
+            <input id="folder-auto" type="checkbox" checked>
+            <span>自动上传</span>
+          </label>
+          <label class="toggle">
+            <input id="folder-enabled" type="checkbox" checked>
+            <span>启用目录</span>
+          </label>
+          <div class="actions">
+            <button type="submit">保存目录</button>
+            <button type="button" id="folder-reset" class="ghost">清空</button>
+          </div>
+        </form>
+        <div id="folder-list" class="list"></div>
+      </section>
+
+      <section class="card wide">
+        <div class="section-head">
+          <h2>目录浏览与手动上传</h2>
+          <div class="toolbar">
+            <select id="browser-folder"></select>
+            <select id="file-type-filter">
+              <option value="all">全部类型</option>
+              <option value="video">视频</option>
+              <option value="image">图片</option>
+              <option value="music">音乐</option>
+              <option value="document">文档</option>
+              <option value="other">其他</option>
+            </select>
+            <select id="file-status-filter">
+              <option value="all">全部状态</option>
+              <option value="pending">未上传</option>
+              <option value="uploaded">已上传</option>
+              <option value="locked">占用中</option>
+            </select>
+            <select id="file-scope-filter">
+              <option value="recursive">包含子目录</option>
+              <option value="direct">仅当前目录</option>
+            </select>
+            <input id="file-search" placeholder="搜索文件名或路径">
+            <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
+            <button id="clear-file-selection" class="ghost" type="button">清空选择</button>
+            <button id="browser-scan" class="ghost" type="button">立即扫描</button>
+            <button id="browser-upload" type="button">上传选中</button>
+          </div>
+        </div>
+        <div id="file-stats" class="stats-grid"></div>
+        <div id="file-summary" class="muted">请选择监控目录</div>
+        <div class="browser-layout">
+          <aside class="browser-sidebar">
+            <div class="section-head compact">
+              <h3>目录树</h3>
+              <button id="reset-subdir" class="ghost" type="button">回到根目录</button>
+            </div>
+            <div id="file-tree" class="tree-list"></div>
+          </aside>
+          <div class="browser-main">
+            <div id="file-current-path" class="muted"></div>
+            <div id="file-feedback" class="panel-feedback hidden"></div>
+            <div id="file-list" class="file-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card wide">
+        <div class="section-head">
+          <h2>上传任务</h2>
+          <div class="toolbar">
+            <div id="upload-stats" class="stats-inline"></div>
+            <select id="task-folder-filter">
+              <option value="all">全部目录</option>
+            </select>
+            <select id="task-status-filter">
+              <option value="all">全部状态</option>
+              <option value="pending">未上传</option>
+              <option value="uploading">上传中</option>
+              <option value="uploaded">已上传</option>
+              <option value="failed">失败</option>
+              <option value="locked">占用中</option>
+            </select>
+            <select id="task-sort">
+              <option value="updated_desc">最近更新</option>
+              <option value="created_desc">最近创建</option>
+              <option value="progress_desc">进度最高</option>
+              <option value="name_asc">文件名 A-Z</option>
+            </select>
+            <input id="task-search" placeholder="搜索任务或错误信息">
+            <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
+            <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
+            <button id="retry-selected" class="ghost" type="button">重试选中</button>
+            <button id="delete-selected" class="ghost" type="button">清理选中</button>
+            <button id="clear-finished" class="ghost" type="button">清理已完成</button>
+            <button id="clear-failed" class="ghost" type="button">清理失败/占用</button>
+            <button id="clear-all" class="ghost" type="button">清理全部</button>
+          </div>
+        </div>
+        <div id="upload-feedback" class="panel-feedback hidden"></div>
+        <div id="upload-list" class="upload-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="preview-dialog">
+    <div class="dialog-toolbar">
+      <button id="preview-prev" class="ghost" type="button">上一项</button>
+      <button id="preview-next" class="ghost" type="button">下一项</button>
+      <button id="preview-close" class="preview-close" type="button">关闭</button>
+    </div>
+    <div id="preview-body"></div>
+  </dialog>
+
+  <dialog id="task-detail-dialog">
+    <button id="task-detail-close" class="preview-close" type="button">关闭</button>
+    <div class="dialog-toolbar">
+      <button id="copy-task-id" class="ghost" type="button">复制任务 ID</button>
+      <button id="copy-task-path" class="ghost" type="button">复制文件路径</button>
+    </div>
+    <div id="task-detail-body"></div>
+  </dialog>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
