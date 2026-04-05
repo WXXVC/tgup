@@ -291,10 +291,8 @@ async def delete_upload_batch(payload: UploadDeleteBatchRequest):
         task = upload_repo.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"task not found: {task_id}")
-        if task.status in {UploadStatus.PENDING, UploadStatus.UPLOADING}:
-            raise HTTPException(status_code=400, detail="cannot delete queued or running tasks")
         task_ids.append(task_id)
-    deleted = upload_repo.delete_tasks(task_ids)
+    deleted = await upload_manager.delete_tasks(task_ids)
     return {"ok": True, "deleted": deleted}
 
 

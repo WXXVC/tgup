@@ -112,6 +112,7 @@ export function renderSettings() {
         <div class="meta">
           <span>频道: ${escapeHtml(channel ? channel.name : "未找到")}</span>
           <span>自动上传: ${folder.auto_upload ? "开" : "关"}</span>
+          <span>媒体组上传: ${folder.media_group_upload ? "开" : "关"}</span>
           <span>扫描: ${folder.scan_interval_seconds}s</span>
           <span>处理: ${escapeHtml(folder.post_upload_action)}</span>
         </div>
@@ -149,6 +150,7 @@ export function fillFolderForm(folderId) {
   document.getElementById("folder-action").value = folder.post_upload_action;
   document.getElementById("folder-move-target").value = folder.move_target_path || "";
   document.getElementById("folder-auto").checked = folder.auto_upload;
+  document.getElementById("folder-media-group").checked = !!folder.media_group_upload;
   document.getElementById("folder-enabled").checked = folder.enabled;
 }
 
@@ -163,6 +165,7 @@ export function resetFolderForm() {
   document.getElementById("folder-form").reset();
   document.getElementById("folder-id").value = "";
   document.getElementById("folder-auto").checked = true;
+  document.getElementById("folder-media-group").checked = false;
   document.getElementById("folder-enabled").checked = true;
   document.getElementById("folder-interval").value = 30;
   document.getElementById("folder-action").value = "keep";

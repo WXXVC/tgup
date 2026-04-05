@@ -1,4 +1,4 @@
-import { state } from "./store.js";
+﻿import { state } from "./store.js";
 import {
   api,
   escapeHtml,
@@ -115,6 +115,25 @@ export function filteredFiles() {
   });
 }
 
+function paginatedFiles(files) {
+  const pageSize = [10, 20, 50, 100].includes(state.filePageSize) ? state.filePageSize : 10;
+  const totalPages = Math.max(1, Math.ceil(files.length / pageSize));
+  const page = Math.min(Math.max(1, state.filePage), totalPages);
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  state.filePage = page;
+  state.filePageSize = pageSize;
+  return {
+    items: files.slice(start, end),
+    page,
+    pageSize,
+    totalPages,
+    totalItems: files.length,
+    start: files.length ? start + 1 : 0,
+    end: Math.min(end, files.length),
+  };
+}
+
 function directoryTree() {
   const map = new Map();
   for (const file of state.files) {
@@ -190,7 +209,7 @@ function renderDirectoryTree() {
   const nodes = visibleDirectoryNodes(directoryTree());
   const currentAncestors = new Set(ancestorPaths(state.currentSubdir));
   if (!state.selectedFolderId) {
-    container.innerHTML = `<p class="muted">请选择目录后浏览子目录树。</p>`;
+    container.innerHTML = `<p class="muted">选择目录后可浏览子目录树。</p>`;
     document.getElementById("file-current-path").textContent = "";
     return;
   }
@@ -234,16 +253,39 @@ function renderFileStats(files) {
   `;
 }
 
+function renderFilePagination(pagination) {
+  const container = document.getElementById("file-pagination");
+  if (!container) return;
+  if (pagination.totalItems === 0) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+  container.classList.remove("hidden");
+  container.innerHTML = `
+    <div class="pagination-summary">第 ${pagination.page}/${pagination.totalPages} 页，显示 ${pagination.start}-${pagination.end} / ${pagination.totalItems}</div>
+    <div class="pagination-actions">
+      <button class="ghost" type="button" data-file-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button>
+      <button class="ghost" type="button" data-file-page="${pagination.page + 1}" ${pagination.page >= pagination.totalPages ? "disabled" : ""}>下一页</button>
+    </div>
+  `;
+}
+
 export function renderFiles() {
   const summary = document.getElementById("file-summary");
   const container = document.getElementById("file-list");
+  const pageSizeControl = document.getElementById("file-page-size");
   container.style.setProperty("--file-columns", String(state.fileColumns));
+  if (pageSizeControl) {
+    pageSizeControl.value = String(state.filePageSize);
+  }
 
   if (!state.selectedFolderId) {
     summary.textContent = "请选择监控目录";
     document.getElementById("file-stats").innerHTML = "";
     document.getElementById("file-current-path").textContent = "";
     document.getElementById("file-tree").innerHTML = "";
+    renderFilePagination({ totalItems: 0 });
     setPanelFeedback("file-feedback", {
       visible: true,
       tone: "empty",
@@ -256,6 +298,7 @@ export function renderFiles() {
 
   if (state.ui.loading.files) {
     renderDirectoryTree();
+    renderFilePagination({ totalItems: 0 });
     setPanelFeedback("file-feedback", {
       visible: true,
       tone: "info",
@@ -269,6 +312,7 @@ export function renderFiles() {
 
   if (state.ui.errors.files) {
     renderDirectoryTree();
+    renderFilePagination({ totalItems: 0 });
     setPanelFeedback("file-feedback", {
       visible: true,
       tone: "error",
@@ -283,8 +327,11 @@ export function renderFiles() {
   }
 
   const files = filteredFiles();
+  const pagination = paginatedFiles(files);
+  const pageItems = pagination.items;
   renderDirectoryTree();
   renderFileStats(files);
+  renderFilePagination(pagination);
   setPanelFeedback("file-feedback", {
     visible: files.length === 0,
     tone: "empty",
@@ -293,9 +340,9 @@ export function renderFiles() {
     actionLabel: "立即扫描",
     actionId: "retry-scan-files",
   });
-  summary.textContent = `共 ${state.files.length} 个文件，筛选后 ${files.length} 个，已选 ${state.selectedFiles.size} 个`;
+  summary.textContent = `共 ${state.files.length} 个文件，筛选后 ${files.length} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个`;
   container.innerHTML = files.length
-    ? files.map((file) => `
+    ? pageItems.map((file) => `
       <article class="file-card">
         <div class="file-card-status">${labeledBadge(file.status)}</div>
         <label class="toggle">
@@ -333,6 +380,7 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.selectedFolderId = "";
     state.currentSubdir = "";
     state.files = [];
+    state.filePage = 1;
     if (resetSelection) {
       state.selectedFiles.clear();
     }
@@ -343,6 +391,7 @@ export async function loadFiles(folderId, resetSelection = true) {
   state.selectedFolderId = folderId;
   state.ui.loading.files = true;
   state.ui.errors.files = "";
+  state.filePage = 1;
   if (resetSelection) {
     state.selectedFiles.clear();
     state.currentSubdir = "";
@@ -360,7 +409,7 @@ export async function loadFiles(folderId, resetSelection = true) {
 }
 
 export function selectVisibleFiles() {
-  for (const file of filteredFiles()) {
+  for (const file of paginatedFiles(filteredFiles()).items) {
     state.selectedFiles.add(file.relative_path);
   }
   renderFiles();
@@ -418,12 +467,14 @@ export function stepPreview(offset) {
 
 export function selectSubdir(subdir) {
   state.currentSubdir = subdir;
+  state.filePage = 1;
   ensureExpandedForCurrentSubdir();
   renderFiles();
 }
 
 export function resetCurrentSubdir() {
   state.currentSubdir = "";
+  state.filePage = 1;
   renderFiles();
 }
 

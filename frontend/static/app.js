@@ -26,6 +26,7 @@ import {
   clearTaskSelection,
   clearUploads,
   copyTaskField,
+  hasActiveUploadTasks,
   deleteSelectedUploads,
   loadUploadStats,
   loadUploads,
@@ -34,10 +35,12 @@ import {
   retryUploadTask,
   selectVisibleTasks,
   showTaskDetail,
+  syncUploadProgress,
   toggleTaskGroup,
 } from "./uploads.js";
 
 let refreshTimer = null;
+const UPLOAD_POLL_INTERVAL_MS = 2500;
 
 const TAB_ROUTE_MAP = {
   settings: "/setting",
@@ -300,6 +303,22 @@ function refreshPolling() {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
+  if (state.activeTab !== "uploads") {
+    return;
+  }
+  refreshTimer = window.setInterval(async () => {
+    if (document.hidden || state.access.enabled && !state.access.authorized) {
+      return;
+    }
+    if (!hasActiveUploadTasks()) {
+      return;
+    }
+    try {
+      await syncUploadProgress();
+    } catch {
+      // Keep the current UI stable; manual refresh remains available.
+    }
+  }, UPLOAD_POLL_INTERVAL_MS);
 }
 
 async function handlePanelAction(targetId) {
@@ -387,10 +406,12 @@ function wireEvents() {
 
   const debouncedFileSearch = debounce((value) => {
     state.fileSearch = value.trim().toLowerCase();
+    state.filePage = 1;
     renderFiles();
   });
   const debouncedTaskSearch = debounce((value) => {
     state.taskSearch = value.trim();
+    state.uploadPage = 1;
     renderUploads();
   });
 
@@ -528,6 +549,7 @@ function wireEvents() {
       path: document.getElementById("folder-path").value,
       channel_id: document.getElementById("folder-channel").value,
       auto_upload: document.getElementById("folder-auto").checked,
+      media_group_upload: document.getElementById("folder-media-group").checked,
       scan_interval_seconds: Number(document.getElementById("folder-interval").value),
       post_upload_action: document.getElementById("folder-action").value,
       move_target_path: document.getElementById("folder-move-target").value,
@@ -556,21 +578,31 @@ function wireEvents() {
 
   document.getElementById("file-type-filter").addEventListener("change", (event) => {
     state.fileTypeFilter = event.target.value;
+    state.filePage = 1;
     renderFiles();
   });
 
   document.getElementById("file-status-filter").addEventListener("change", (event) => {
     state.fileStatusFilter = event.target.value;
+    state.filePage = 1;
     renderFiles();
   });
 
   document.getElementById("file-scope-filter").addEventListener("change", (event) => {
     state.fileScopeFilter = event.target.value;
+    state.filePage = 1;
     renderFiles();
   });
 
   document.getElementById("file-search").addEventListener("input", (event) => {
     debouncedFileSearch(event.target.value);
+  });
+
+  document.getElementById("file-page-size").addEventListener("change", (event) => {
+    const value = Number(event.target.value);
+    state.filePageSize = [10, 20, 50, 100].includes(value) ? value : 10;
+    state.filePage = 1;
+    renderFiles();
   });
 
   document.getElementById("select-visible-files").addEventListener("click", () => {
@@ -587,21 +619,31 @@ function wireEvents() {
 
   document.getElementById("task-folder-filter").addEventListener("change", (event) => {
     state.taskFolderFilter = event.target.value;
+    state.uploadPage = 1;
     renderUploads();
   });
 
   document.getElementById("task-status-filter").addEventListener("change", (event) => {
     state.taskStatusFilter = event.target.value;
+    state.uploadPage = 1;
     renderUploads();
   });
 
   document.getElementById("task-sort").addEventListener("change", (event) => {
     state.taskSort = event.target.value;
+    state.uploadPage = 1;
     renderUploads();
   });
 
   document.getElementById("task-search").addEventListener("input", (event) => {
     debouncedTaskSearch(event.target.value);
+  });
+
+  document.getElementById("upload-page-size").addEventListener("change", (event) => {
+    const value = Number(event.target.value);
+    state.uploadPageSize = [10, 20, 50, 100].includes(value) ? value : 10;
+    state.uploadPage = 1;
+    renderUploads();
   });
 
   document.getElementById("browser-scan").addEventListener("click", async () => {
@@ -722,6 +764,20 @@ function wireEvents() {
         state.selectedFiles.delete(filePath);
       }
       renderFiles();
+    }
+    if (target.matches("[data-file-page]")) {
+      const value = Number(target.dataset.filePage);
+      if (Number.isFinite(value) && value > 0) {
+        state.filePage = value;
+        renderFiles();
+      }
+    }
+    if (target.matches("[data-task-page]")) {
+      const value = Number(target.dataset.taskPage);
+      if (Number.isFinite(value) && value > 0) {
+        state.uploadPage = value;
+        renderUploads();
+      }
     }
     if (target.matches("[data-task-select]")) {
       const taskId = target.dataset.taskSelect;

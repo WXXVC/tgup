@@ -17,6 +17,8 @@ def init_db() -> None:
                 relative_path TEXT NOT NULL,
                 absolute_path TEXT NOT NULL,
                 batch_paths TEXT NOT NULL DEFAULT '[]',
+                batch_items TEXT NOT NULL DEFAULT '[]',
+                completed_count INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL,
                 progress REAL NOT NULL,
                 error_message TEXT NOT NULL,
@@ -34,6 +36,14 @@ def init_db() -> None:
         if "batch_paths" not in columns:
             connection.execute(
                 "ALTER TABLE uploads ADD COLUMN batch_paths TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "batch_items" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN batch_items TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "completed_count" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN completed_count INTEGER NOT NULL DEFAULT 0"
             )
         connection.execute(
             """

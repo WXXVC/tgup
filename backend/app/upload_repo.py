@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from .db import get_connection
-from .models import UploadStats, UploadStatus, UploadTask
+from .models import UploadBatchItem, UploadStats, UploadStatus, UploadTask
 
 
 class UploadRepository:
@@ -24,18 +24,21 @@ class UploadRepository:
     def upsert_task(self, task: UploadTask) -> UploadTask:
         payload = task.model_dump()
         payload["batch_paths"] = json.dumps(payload["batch_paths"], ensure_ascii=True)
+        payload["batch_items"] = json.dumps([item.model_dump(mode="json") for item in task.batch_items], ensure_ascii=True)
         with get_connection() as connection:
             connection.execute(
                 """
                 INSERT INTO uploads (
-                    id, folder_id, channel_id, relative_path, absolute_path, batch_paths, status,
+                    id, folder_id, channel_id, relative_path, absolute_path, batch_paths, batch_items, completed_count, status,
                     progress, error_message, caption, created_at, updated_at
                 ) VALUES (
-                    :id, :folder_id, :channel_id, :relative_path, :absolute_path, :batch_paths, :status,
+                    :id, :folder_id, :channel_id, :relative_path, :absolute_path, :batch_paths, :batch_items, :completed_count, :status,
                     :progress, :error_message, :caption, :created_at, :updated_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     batch_paths = excluded.batch_paths,
+                    batch_items = excluded.batch_items,
+                    completed_count = excluded.completed_count,
                     status = excluded.status,
                     progress = excluded.progress,
                     error_message = excluded.error_message,
@@ -50,6 +53,10 @@ class UploadRepository:
     def _decode_task(self, row) -> UploadTask:
         payload = dict(row)
         payload["batch_paths"] = json.loads(payload.get("batch_paths") or "[]")
+        payload["batch_items"] = [
+            UploadBatchItem.model_validate(item)
+            for item in json.loads(payload.get("batch_items") or "[]")
+        ]
         return UploadTask.model_validate(payload)
 
     def update_task(self, task_id: str, **changes: Any) -> UploadTask | None:

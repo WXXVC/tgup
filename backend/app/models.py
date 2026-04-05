@@ -47,6 +47,7 @@ class FolderConfig(BaseModel):
     path: str
     channel_id: str
     auto_upload: bool = True
+    media_group_upload: bool = False
     scan_interval_seconds: int = Field(default=30, ge=5, le=3600)
     post_upload_action: PostUploadAction = PostUploadAction.KEEP
     move_target_path: str = ""
@@ -89,6 +90,7 @@ class FolderPayload(BaseModel):
     path: str
     channel_id: str
     auto_upload: bool = True
+    media_group_upload: bool = False
     scan_interval_seconds: int = Field(default=30, ge=5, le=3600)
     post_upload_action: PostUploadAction = PostUploadAction.KEEP
     move_target_path: str = ""
@@ -104,6 +106,13 @@ class FileEntry(BaseModel):
     status: UploadStatus
 
 
+class UploadBatchItem(BaseModel):
+    relative_path: str
+    status: UploadStatus = UploadStatus.PENDING
+    progress: float = 0.0
+    error_message: str = ""
+
+
 class UploadTask(BaseModel):
     id: str
     folder_id: str
@@ -111,6 +120,8 @@ class UploadTask(BaseModel):
     relative_path: str
     absolute_path: str
     batch_paths: list[str] = Field(default_factory=list)
+    batch_items: list[UploadBatchItem] = Field(default_factory=list)
+    completed_count: int = 0
     status: UploadStatus
     progress: float = 0.0
     error_message: str = ""

@@ -232,6 +232,13 @@
                   </span>
                 </label>
                 <label class="toggle switch-row">
+                  <input id="folder-media-group" type="checkbox">
+                  <span class="switch-copy">
+                    <strong>媒体组上传</strong>
+                    <small>启用后，多张图片或多个视频会按 Telegram 相册样式合并上传</small>
+                  </span>
+                </label>
+                <label class="toggle switch-row">
                   <input id="folder-enabled" type="checkbox" checked>
                   <span class="switch-copy">
                     <strong>启用目录</strong>
@@ -276,10 +283,16 @@
                 <option value="locked">占用中</option>
               </select>
               <select id="file-scope-filter">
-                <option value="recursive">包含子目录</option>
                 <option value="direct">仅当前目录</option>
+                <option value="recursive">包含子目录</option>
               </select>
               <input id="file-search" placeholder="搜索文件名或路径">
+              <select id="file-page-size">
+                <option value="10" selected>每页 10 个</option>
+                <option value="20">每页 20 个</option>
+                <option value="50">每页 50 个</option>
+                <option value="100">每页 100 个</option>
+              </select>
               <button id="browser-refresh" class="ghost" type="button">刷新列表</button>
               <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
               <button id="clear-file-selection" class="ghost" type="button">清空选择</button>
@@ -301,6 +314,7 @@
                 <div id="file-current-path" class="muted"></div>
                 <div id="file-feedback" class="panel-feedback hidden"></div>
                 <div id="file-list" class="file-grid"></div>
+                <div id="file-pagination" class="pagination-bar hidden"></div>
               </div>
             </div>
           </section>
@@ -312,42 +326,53 @@
               <h2>上传任务</h2>
             </div>
             <div class="toolbar dense toolbar-compact upload-toolbar">
-              <select id="task-columns">
-                <option value="3" selected>每行 3 个</option>
-                <option value="4">每行 4 个</option>
-                <option value="5">每行 5 个</option>
-                <option value="6">每行 6 个</option>
-              </select>
-              <select id="task-folder-filter">
-                <option value="all">全部目录</option>
-              </select>
-              <select id="task-status-filter">
-                <option value="all">全部状态</option>
-                <option value="pending">未上传</option>
-                <option value="uploading">上传中</option>
-                <option value="uploaded">已上传</option>
-                <option value="failed">失败</option>
-                <option value="locked">占用中</option>
-              </select>
-              <select id="task-sort">
-                <option value="updated_desc">最近更新</option>
-                <option value="created_desc">最近创建</option>
-                <option value="progress_desc">进度最高</option>
-                <option value="name_asc">文件名 A-Z</option>
-              </select>
-              <input id="task-search" placeholder="搜索任务或错误信息">
-              <button id="upload-refresh" class="ghost" type="button">刷新任务</button>
-              <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
-              <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
-              <button id="retry-selected" class="ghost" type="button">重试选中</button>
-              <button id="delete-selected" class="ghost" type="button">清理选中</button>
-              <button id="clear-finished" class="ghost" type="button">清理已完成</button>
-              <button id="clear-failed" class="ghost" type="button">清理失败/占用</button>
-              <button id="clear-all" class="ghost" type="button">清理全部</button>
+              <div class="upload-toolbar-row upload-toolbar-row-filters">
+                <select id="task-columns">
+                  <option value="3" selected>每行 3 个</option>
+                  <option value="4">每行 4 个</option>
+                  <option value="5">每行 5 个</option>
+                  <option value="6">每行 6 个</option>
+                </select>
+                <select id="task-folder-filter">
+                  <option value="all">全部目录</option>
+                </select>
+                <select id="task-status-filter">
+                  <option value="all">全部状态</option>
+                  <option value="pending">未上传</option>
+                  <option value="uploading">上传中</option>
+                  <option value="uploaded">已上传</option>
+                  <option value="failed">失败</option>
+                  <option value="locked">占用中</option>
+                </select>
+                <select id="task-sort">
+                  <option value="updated_desc">最近更新</option>
+                  <option value="created_desc">最近创建</option>
+                  <option value="progress_desc">进度最高</option>
+                  <option value="name_asc">文件名 A-Z</option>
+                </select>
+                <input id="task-search" placeholder="搜索任务或错误信息">
+                <select id="upload-page-size">
+                  <option value="10" selected>每页 10 个</option>
+                  <option value="20">每页 20 个</option>
+                  <option value="50">每页 50 个</option>
+                  <option value="100">每页 100 个</option>
+                </select>
+              </div>
+              <div class="upload-toolbar-row upload-toolbar-row-actions">
+                <button id="upload-refresh" class="ghost" type="button">刷新任务</button>
+                <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
+                <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
+                <button id="retry-selected" class="ghost" type="button">重试选中</button>
+                <button id="delete-selected" class="ghost" type="button">清理选中</button>
+                <button id="clear-finished" class="ghost caution" type="button">清理已完成</button>
+                <button id="clear-failed" class="ghost caution" type="button">清理失败/占用</button>
+                <button id="clear-all" class="ghost danger-action" type="button">清理全部</button>
+              </div>
             </div>
             <div id="upload-feedback" class="panel-feedback hidden"></div>
             <div id="upload-summary" class="muted upload-summary"></div>
             <div id="upload-list" class="upload-list"></div>
+            <div id="upload-pagination" class="pagination-bar hidden"></div>
           </section>
         </section>
       </div>
@@ -369,10 +394,12 @@
   </dialog>
 
   <dialog id="task-detail-dialog">
-    <button id="task-detail-close" class="preview-close" type="button">关闭</button>
-    <div class="dialog-toolbar">
-      <button id="copy-task-id" class="ghost" type="button">复制任务 ID</button>
-      <button id="copy-task-path" class="ghost" type="button">复制文件路径</button>
+    <div class="task-detail-toolbar">
+      <button id="task-detail-close" class="preview-close" type="button">关闭</button>
+      <div class="dialog-toolbar">
+        <button id="copy-task-id" class="ghost" type="button">复制任务 ID</button>
+        <button id="copy-task-path" class="ghost" type="button">复制文件路径</button>
+      </div>
     </div>
     <div id="task-detail-body"></div>
   </dialog>

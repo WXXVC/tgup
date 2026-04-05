@@ -9,7 +9,7 @@ from uuid import uuid4
 from telethon.tl.types import Message
 
 from .file_utils import classify_file, file_is_locked
-from .models import FolderConfig, UploadStatus, UploadTask
+from .models import FolderConfig, UploadBatchItem, UploadStatus, UploadTask
 from .scanner import FolderScanner
 from .settings_service import SettingsService
 from .telegram_client import TelegramSessionManager
@@ -31,7 +31,10 @@ class UploadManager:
         self.queue: asyncio.Queue[UploadTask] = asyncio.Queue()
         self.worker_task: asyncio.Task | None = None
         self.scan_task: asyncio.Task | None = None
+        self.active_upload_task: asyncio.Task | None = None
+        self.active_upload_id: str | None = None
         self.pending_signatures: set[tuple[str, tuple[str, ...]]] = set()
+        self.deleted_task_ids: set[str] = set()
 
     async def start(self) -> None:
         if not self.worker_task:
@@ -52,11 +55,8 @@ class UploadManager:
         normalized = self._normalize_relative_paths(folder, relative_paths)
         if not normalized:
             raise ValueError("no files selected")
-        if len(normalized) > 1 and self._all_media(folder, normalized):
-            await self._enqueue_task(folder, normalized[0], normalized, force=True)
-            return
-        for relative_path in normalized:
-            await self._enqueue_task(folder, relative_path, [relative_path], force=True)
+        for lead_path, batch_paths in self._build_upload_batches(folder, normalized, group_by_parent=False):
+            await self._enqueue_task(folder, lead_path, batch_paths, force=True)
 
     async def trigger_scan(self, folder_id: str | None = None) -> None:
         folders = self.settings_service.settings.folders
@@ -82,6 +82,8 @@ class UploadManager:
             status=UploadStatus.PENDING,
             progress=0,
             error_message="",
+            completed_count=0,
+            batch_items=self._build_batch_items(task.batch_paths or [task.relative_path], UploadStatus.PENDING, progress=0),
             updated_at=time.time(),
         )
         signature = self._task_signature(task.folder_id, task.batch_paths or [task.relative_path])
@@ -100,6 +102,25 @@ class UploadManager:
             retried.append(await self.retry_task(task_id))
         return retried
 
+    async def delete_tasks(self, task_ids: list[str]) -> int:
+        deleted = 0
+        seen: set[str] = set()
+        for task_id in task_ids:
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            task = self.upload_repo.get_task(task_id)
+            if not task:
+                continue
+            signature = self._task_signature(task.folder_id, task.batch_paths or [task.relative_path])
+            self.pending_signatures.discard(signature)
+            self.deleted_task_ids.add(task_id)
+            if self.upload_repo.delete_task(task_id):
+                deleted += 1
+            if self.active_upload_id == task_id and self.active_upload_task:
+                self.active_upload_task.cancel()
+        return deleted
+
     async def _scanner_loop(self) -> None:
         while True:
             now = time.time()
@@ -114,9 +135,9 @@ class UploadManager:
             await asyncio.sleep(max(5, sleep_for - elapsed))
 
     async def _scan_folder(self, folder: FolderConfig) -> None:
-        for item in self.scanner.list_files(folder.id, folder.path):
-            if item.status == UploadStatus.PENDING:
-                await self._enqueue_task(folder, item.relative_path, [item.relative_path])
+        pending_paths = [item.relative_path for item in self.scanner.list_files(folder.id, folder.path) if item.status == UploadStatus.PENDING]
+        for lead_path, batch_paths in self._build_upload_batches(folder, pending_paths, group_by_parent=True):
+            await self._enqueue_task(folder, lead_path, batch_paths)
 
     async def _enqueue_task(
         self,
@@ -147,6 +168,8 @@ class UploadManager:
             relative_path=relative_path,
             absolute_path=str(absolute_path),
             batch_paths=batch_paths,
+            batch_items=self._build_batch_items(batch_paths, UploadStatus.PENDING, progress=0),
+            completed_count=0,
             status=UploadStatus.PENDING,
             progress=0,
             error_message="",
@@ -161,8 +184,24 @@ class UploadManager:
     async def _worker(self) -> None:
         while True:
             task = await self.queue.get()
-            await self._process_task(task)
-            self.queue.task_done()
+            signature = self._task_signature(task.folder_id, task.batch_paths or [task.relative_path])
+            current = self.upload_repo.get_task(task.id)
+            if task.id in self.deleted_task_ids or not current:
+                self.deleted_task_ids.discard(task.id)
+                self.pending_signatures.discard(signature)
+                self.queue.task_done()
+                continue
+            self.active_upload_id = task.id
+            self.active_upload_task = asyncio.create_task(self._process_task(task))
+            try:
+                await self.active_upload_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self.active_upload_task = None
+                self.active_upload_id = None
+                self.deleted_task_ids.discard(task.id)
+                self.queue.task_done()
 
     async def _process_task(self, task: UploadTask) -> None:
         folder = self._folder_map().get(task.folder_id)
@@ -175,6 +214,7 @@ class UploadManager:
                     task.id,
                     status=UploadStatus.FAILED,
                     error_message="missing folder, channel, or file",
+                    batch_items=self._build_batch_items(task.batch_paths or [task.relative_path], UploadStatus.FAILED, "missing folder, channel, or file", 0),
                 )
                 return
             locked_path = next((path for path in paths if file_is_locked(path)), None)
@@ -183,9 +223,16 @@ class UploadManager:
                     task.id,
                     status=UploadStatus.LOCKED,
                     error_message=f"file is locked: {locked_path.name}",
+                    batch_items=self._build_batch_items(task.batch_paths or [task.relative_path], UploadStatus.LOCKED, f"file is locked: {locked_path.name}", 0),
                 )
                 return
-            self.upload_repo.update_task(task.id, status=UploadStatus.UPLOADING, progress=0, error_message="")
+            self.upload_repo.update_task(
+                task.id,
+                status=UploadStatus.UPLOADING,
+                progress=0,
+                error_message="",
+                batch_items=self._build_batch_items(task.batch_paths or [task.relative_path], UploadStatus.UPLOADING, progress=0),
+            )
             total_size = sum(path.stat().st_size for path in paths)
             use_album = len(paths) > 1 and all(classify_file(path) in {"video", "image"} for path in paths)
             message = await self._send_paths(channel.target, paths, task.caption, task.id, total_size, use_album)
@@ -202,9 +249,22 @@ class UploadManager:
                     message_id,
                 )
                 self._apply_post_action(folder, uploaded_path)
-            self.upload_repo.update_task(task.id, status=UploadStatus.UPLOADED, progress=100)
+            self.upload_repo.update_task(
+                task.id,
+                status=UploadStatus.UPLOADED,
+                progress=100,
+                completed_count=len(paths),
+                batch_items=self._build_batch_items(task.batch_paths or [task.relative_path], UploadStatus.UPLOADED, progress=100),
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            self.upload_repo.update_task(task.id, status=UploadStatus.FAILED, error_message=str(exc))
+            self.upload_repo.update_task(
+                task.id,
+                status=UploadStatus.FAILED,
+                error_message=str(exc),
+                batch_items=self._build_batch_items(task.batch_paths or [task.relative_path], UploadStatus.FAILED, str(exc), 0),
+            )
         finally:
             self.pending_signatures.discard(signature)
 
@@ -246,7 +306,13 @@ class UploadManager:
         def callback(current: int, total: int) -> None:
             denominator = total or total_size
             progress = round((current / max(1, denominator)) * 100, 2)
-            self.upload_repo.update_task(task_id, progress=progress)
+            task = self.upload_repo.get_task(task_id)
+            batch_paths = task.batch_paths if task else []
+            self.upload_repo.update_task(
+                task_id,
+                progress=progress,
+                batch_items=self._build_batch_items(batch_paths or [task.relative_path] if task else [], UploadStatus.UPLOADING, progress=progress),
+            )
 
         return callback
 
@@ -261,7 +327,13 @@ class UploadManager:
             current_total = total or file_size
             uploaded = sent_bytes + min(current, current_total)
             progress = round((uploaded / max(1, total_size)) * 100, 2)
-            self.upload_repo.update_task(task_id, progress=progress)
+            task = self.upload_repo.get_task(task_id)
+            batch_paths = task.batch_paths if task else []
+            self.upload_repo.update_task(
+                task_id,
+                progress=progress,
+                batch_items=self._build_batch_items(batch_paths or [task.relative_path] if task else [], UploadStatus.UPLOADING, progress=progress),
+            )
 
         return callback
 
@@ -330,9 +402,60 @@ class UploadManager:
                 resolved.append(candidate)
         return resolved
 
-    def _all_media(self, folder: FolderConfig, relative_paths: list[str]) -> bool:
+    def _build_upload_batches(
+        self,
+        folder: FolderConfig,
+        relative_paths: list[str],
+        *,
+        group_by_parent: bool,
+    ) -> list[tuple[str, list[str]]]:
+        if not relative_paths:
+            return []
+
+        if not folder.media_group_upload:
+            return [(relative_path, [relative_path]) for relative_path in relative_paths]
+
         root = Path(folder.path)
-        return all(classify_file(root / relative_path) in {"video", "image"} for relative_path in relative_paths)
+        groups: dict[str, list[str]] = {}
+        ordered_keys: list[str] = []
+        for relative_path in relative_paths:
+            parent = str(Path(relative_path).parent).replace("\\", "/")
+            key = parent if group_by_parent else "__manual__"
+            if key not in groups:
+                groups[key] = []
+                ordered_keys.append(key)
+            groups[key].append(relative_path)
+
+        batches: list[tuple[str, list[str]]] = []
+        for key in ordered_keys:
+            paths = groups[key]
+            media_paths = [path for path in paths if classify_file(root / path) in {"video", "image"}]
+            non_media_paths = [path for path in paths if path not in media_paths]
+            if len(media_paths) > 1:
+                batches.append((media_paths[0], media_paths))
+            else:
+                for path in media_paths:
+                    batches.append((path, [path]))
+            for path in non_media_paths:
+                batches.append((path, [path]))
+        return batches
 
     def _task_signature(self, folder_id: str, batch_paths: list[str]) -> tuple[str, tuple[str, ...]]:
         return folder_id, tuple(sorted(batch_paths))
+
+    def _build_batch_items(
+        self,
+        relative_paths: list[str],
+        status: UploadStatus,
+        error_message: str = "",
+        progress: float = 0.0,
+    ) -> list[UploadBatchItem]:
+        return [
+            UploadBatchItem(
+                relative_path=relative_path,
+                status=status,
+                progress=progress,
+                error_message=error_message,
+            )
+            for relative_path in relative_paths
+        ]
