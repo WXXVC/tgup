@@ -671,6 +671,9 @@ function wireEvents() {
       folder_id: state.selectedFolderId,
       relative_paths: Array.from(state.selectedFiles),
     });
+    state.selectedFiles.clear();
+    renderFiles();
+    await loadFiles(state.selectedFolderId, false);
     await loadUploads();
     pushToast("手动上传任务已创建", "success");
   });

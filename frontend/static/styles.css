@@ -1630,39 +1630,42 @@ dialog::backdrop {
 
 .detail-subtask-list {
   display: grid;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .detail-subtask-item {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.45);
-  box-shadow: 0 6px 16px rgba(70, 48, 25, 0.04);
+  box-shadow: 0 4px 12px rgba(70, 48, 25, 0.04);
 }
 
 .detail-subtask-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .detail-subtask-head strong {
-  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .detail-subtask-progress {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .detail-subtask-progress span {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -1683,8 +1686,16 @@ dialog::backdrop {
 }
 
 .detail-subtask-item .danger {
-  font-size: 12px;
-  line-height: 1.5;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.detail-subtask-item .badge {
+  min-height: 24px;
+  padding: 4px 8px;
+  font-size: 11px;
+  flex: none;
 }
 
 .upload-task-item {
@@ -1743,6 +1754,19 @@ dialog::backdrop {
   padding: 6px 12px;
   font-size: 13px;
   white-space: nowrap;
+}
+
+#task-detail-dialog {
+  display: flex;
+  flex-direction: column;
+}
+
+#task-detail-body {
+  flex: 1;
+  min-height: 0;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .detail-subtask-item p {

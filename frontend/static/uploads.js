@@ -401,7 +401,7 @@ export function showTaskDetail(taskId) {
     ? `<div class="detail-subtask-list">${task.batch_items.map((item, index) => `
         <article class="detail-subtask-item detail-subtask-item-${item.status}">
           <div class="detail-subtask-head">
-            <strong>${index + 1}. ${escapeHtml(item.relative_path)}</strong>
+            <strong class="truncate-text" title="${escapeHtml(`${index + 1}. ${item.relative_path}`)}">${index + 1}. ${escapeHtml(item.relative_path)}</strong>
             ${labeledBadge(item.status)}
           </div>
           <div class="detail-subtask-progress">
