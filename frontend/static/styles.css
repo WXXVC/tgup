@@ -211,31 +211,31 @@ select:focus-visible {
 
 .top-stats-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 3px;
   align-items: stretch;
 }
 
 .top-stat-card {
-  padding: 6px 4px;
-  border-radius: 12px;
+  padding: 5px 4px;
+  border-radius: 11px;
   background: rgba(42, 32, 22, 0.06);
   border: 1px solid rgba(105, 78, 49, 0.08);
   text-align: center;
-  min-height: 28px;
+  min-height: 26px;
 }
 
 .top-stat-card strong {
   display: block;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
 }
 
 .top-stat-card span {
   display: block;
-  margin-top: 2px;
+  margin-top: 1px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .top-stat-card.is-active {
@@ -1643,20 +1643,25 @@ dialog::backdrop {
 }
 
 .detail-subtask-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 90%) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  min-width: 0;
-  overflow: hidden;
+  width: 100%;
 }
 
 .detail-subtask-head strong {
-  flex: 1;
+  display: block;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.detail-subtask-head .badge {
+  min-width: max-content;
+  justify-self: end;
 }
 
 .detail-subtask-progress {
