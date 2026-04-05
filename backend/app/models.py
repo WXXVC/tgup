@@ -61,9 +61,9 @@ class AppSettings(BaseModel):
 
 
 class LoginStartRequest(BaseModel):
-    api_id: int
-    api_hash: str
-    phone_number: str
+    api_id: int | None = None
+    api_hash: str = ""
+    phone_number: str = ""
 
 
 class LoginCodeRequest(BaseModel):

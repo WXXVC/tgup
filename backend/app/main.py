@@ -63,7 +63,12 @@ if static_dir.exists():
 
 
 def is_public_path(path: str) -> bool:
-    return path == "/" or path.startswith("/static/") or path in {
+    return path.startswith("/static/") or path in {
+        "/",
+        "/login",
+        "/dir",
+        "/setting",
+        "/upload",
         "/api/access/status",
         "/api/access/login",
     }
@@ -79,6 +84,10 @@ async def access_password_guard(request: Request, call_next):
 
 
 @app.get("/")
+@app.get("/login")
+@app.get("/dir")
+@app.get("/setting")
+@app.get("/upload")
 async def index():
     if not (frontend_dir / "index.html").exists():
         raise HTTPException(status_code=404, detail="frontend not found")
@@ -144,14 +153,16 @@ async def clear_access_password():
 
 @app.post("/api/settings/api")
 async def save_api_settings(payload: LoginStartRequest):
-    settings_service.update_api(payload.api_id, payload.api_hash, payload.phone_number)
+    api_id, api_hash, phone_number = settings_service.resolve_api_payload(payload)
+    settings_service.update_api(api_id, api_hash, phone_number)
     return {"ok": True}
 
 
 @app.post("/api/auth/start")
 async def auth_start(payload: LoginStartRequest):
-    stage = await telegram.start_login(payload.api_id, payload.api_hash, payload.phone_number)
-    settings_service.update_api(payload.api_id, payload.api_hash, payload.phone_number)
+    api_id, api_hash, phone_number = settings_service.resolve_api_payload(payload)
+    stage = await telegram.start_login(api_id, api_hash, phone_number)
+    settings_service.update_api(api_id, api_hash, phone_number)
     return {"stage": stage.value, "last_error": telegram.last_error}
 
 

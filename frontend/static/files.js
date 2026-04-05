@@ -9,6 +9,69 @@ import {
   setPanelFeedback,
 } from "./utils.js";
 
+function applyPreviewSize() {
+  const dialog = document.getElementById("preview-dialog");
+  if (!dialog) return;
+  dialog.dataset.previewSize = state.previewSize || "medium";
+  document.querySelectorAll("[data-preview-size]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.previewSize === dialog.dataset.previewSize);
+  });
+}
+
+function fitPreviewVideo(body) {
+  const stage = body.querySelector(".preview-stage-video");
+  const video = stage?.querySelector("video");
+  if (!stage || !video) return;
+
+  const stageRect = stage.getBoundingClientRect();
+  const stageWidth = Math.max(1, stageRect.width - 24);
+  const stageHeight = Math.max(1, stageRect.height - 24);
+  const videoWidth = video.videoWidth || 1;
+  const videoHeight = video.videoHeight || 1;
+  const scale = Math.min(stageWidth / videoWidth, stageHeight / videoHeight);
+  const renderWidth = Math.max(1, Math.floor(videoWidth * scale));
+  const renderHeight = Math.max(1, Math.floor(videoHeight * scale));
+  const isPortrait = videoHeight > videoWidth;
+
+  stage.classList.toggle("is-portrait", isPortrait);
+  stage.classList.toggle("is-landscape", !isPortrait);
+  video.style.width = `${renderWidth}px`;
+  video.style.height = `${renderHeight}px`;
+}
+
+function bindPreviewVideoLayout(body) {
+  const video = body.querySelector(".preview-stage-video video");
+  if (!video) return;
+
+  const updateLayout = () => {
+    window.requestAnimationFrame(() => fitPreviewVideo(body));
+  };
+
+  if (video.readyState >= 1) {
+    updateLayout();
+  } else {
+    video.addEventListener("loadedmetadata", updateLayout, { once: true });
+  }
+
+  video.addEventListener("loadeddata", updateLayout, { once: true });
+}
+
+export function setPreviewSize(size) {
+  state.previewSize = ["small", "medium", "large"].includes(size) ? size : "medium";
+  window.localStorage.setItem("tgup:preview-size", state.previewSize);
+  applyPreviewSize();
+  const body = document.getElementById("preview-body");
+  if (body?.querySelector(".preview-stage-video video")) {
+    window.requestAnimationFrame(() => fitPreviewVideo(body));
+  }
+}
+
+export function initPreviewSize() {
+  const saved = window.localStorage.getItem("tgup:preview-size");
+  state.previewSize = ["small", "medium", "large"].includes(saved || "") ? saved : "medium";
+  applyPreviewSize();
+}
+
 function previewMarkup(file) {
   const previewUrl = `/api/files/preview?folder_id=${encodeURIComponent(state.selectedFolderId)}&relative_path=${encodeURIComponent(file.relative_path)}`;
   if (file.file_type === "image") {
@@ -57,19 +120,75 @@ function directoryTree() {
   for (const file of state.files) {
     const parts = file.relative_path.split("/").slice(0, -1);
     let current = "";
+    let parent = "";
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
-      map.set(current, (map.get(current) || 0) + 1);
+      if (!map.has(current)) {
+        map.set(current, {
+          path: current,
+          name: part,
+          count: 0,
+          depth: current.split("/").length - 1,
+          parent,
+          children: new Set(),
+        });
+      }
+      map.get(current).count += 1;
+      if (parent && map.has(parent)) {
+        map.get(parent).children.add(current);
+      }
+      parent = current;
     }
   }
-  return [...map.entries()]
-    .sort((left, right) => left[0].localeCompare(right[0]))
-    .map(([path, count]) => ({ path, count, depth: path.split("/").length - 1 }));
+  return [...map.values()]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .map((node) => ({ ...node, children: [...node.children].sort((left, right) => left.localeCompare(right)) }));
+}
+
+function visibleDirectoryNodes(nodes) {
+  const byParent = new Map();
+  nodes.forEach((node) => {
+    const key = node.parent || "__root__";
+    if (!byParent.has(key)) {
+      byParent.set(key, []);
+    }
+    byParent.get(key).push(node);
+  });
+  byParent.forEach((items) => items.sort((left, right) => left.name.localeCompare(right.name)));
+
+  const result = [];
+  const walk = (parent = "") => {
+    const key = parent || "__root__";
+    const children = byParent.get(key) || [];
+    children.forEach((node) => {
+      const isCollapsed = !!state.collapsedDirs[node.path];
+      result.push({ ...node, isCollapsed, hasChildren: node.children.length > 0 });
+      if (!isCollapsed) {
+        walk(node.path);
+      }
+    });
+  };
+  walk();
+  return result;
+}
+
+function ancestorPaths(path) {
+  if (!path) return [];
+  const parts = path.split("/");
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
+}
+
+function ensureExpandedForCurrentSubdir() {
+  ancestorPaths(state.currentSubdir).forEach((path) => {
+    state.collapsedDirs[path] = false;
+  });
 }
 
 function renderDirectoryTree() {
   const container = document.getElementById("file-tree");
-  const nodes = directoryTree();
+  ensureExpandedForCurrentSubdir();
+  const nodes = visibleDirectoryNodes(directoryTree());
+  const currentAncestors = new Set(ancestorPaths(state.currentSubdir));
   if (!state.selectedFolderId) {
     container.innerHTML = `<p class="muted">请选择目录后浏览子目录树。</p>`;
     document.getElementById("file-current-path").textContent = "";
@@ -79,12 +198,18 @@ function renderDirectoryTree() {
   container.innerHTML = nodes.length
     ? nodes.map((node) => `
       <button
-        class="tree-node ${node.path === state.currentSubdir ? "active" : ""}"
+        class="tree-node ${node.path === state.currentSubdir ? "active" : ""} ${node.path !== state.currentSubdir && currentAncestors.has(node.path) ? "ancestor" : ""}"
         data-subdir="${escapeHtml(node.path)}"
         type="button"
-        style="padding-left:${14 + node.depth * 18}px"
+        style="--tree-depth:${node.depth}"
       >
-        <span>${escapeHtml(node.path.split("/").at(-1) || node.path)}</span>
+        <span class="tree-node-row">
+          ${node.hasChildren
+            ? `<span class="tree-node-toggle ${node.isCollapsed ? "collapsed" : ""}" data-tree-toggle="${escapeHtml(node.path)}" aria-hidden="true"></span>`
+            : `<span class="tree-node-toggle spacer" aria-hidden="true"></span>`}
+          <span class="tree-node-folder" aria-hidden="true"></span>
+          <span class="tree-node-label">${escapeHtml(node.path.split("/").at(-1) || node.path)}</span>
+        </span>
         <small>${node.count}</small>
       </button>
     `).join("")
@@ -257,18 +382,28 @@ export async function handlePreview(relativePath) {
   state.previewRelativePath = relativePath;
   const previewUrl = `/api/files/preview?folder_id=${encodeURIComponent(state.selectedFolderId)}&relative_path=${encodeURIComponent(relativePath)}`;
   const body = document.getElementById("preview-body");
+  body.className = "";
 
   if (file.file_type === "image") {
-    body.innerHTML = `<img src="${previewUrl}" alt="${escapeHtml(relativePath)}">`;
+    body.className = "preview-media-shell";
+    body.innerHTML = `<div class="preview-stage"><img src="${previewUrl}" alt="${escapeHtml(relativePath)}"></div>`;
   } else if (file.file_type === "video") {
-    body.innerHTML = `<video src="${previewUrl}" controls autoplay playsinline></video>`;
+    body.className = "preview-media-shell";
+    body.innerHTML = `<div class="preview-stage preview-stage-video"><video src="${previewUrl}" controls autoplay playsinline preload="metadata"></video></div>`;
+    bindPreviewVideoLayout(body);
   } else if (file.file_type === "music") {
-    body.innerHTML = `<audio src="${previewUrl}" controls autoplay></audio>`;
+    body.className = "preview-audio-shell";
+    body.innerHTML = `<div class="preview-audio-card"><audio src="${previewUrl}" controls autoplay></audio></div>`;
   } else {
-    body.innerHTML = `<iframe src="${previewUrl}" style="width:100%;height:70vh;border:none;"></iframe>`;
+    body.className = "preview-doc-shell";
+    body.innerHTML = `<div class="preview-stage preview-stage-doc"><iframe src="${previewUrl}" title="${escapeHtml(relativePath)}"></iframe></div>`;
   }
 
+  applyPreviewSize();
   document.getElementById("preview-dialog").showModal();
+  if (file.file_type === "video") {
+    window.requestAnimationFrame(() => fitPreviewVideo(body));
+  }
 }
 
 export function stepPreview(offset) {
@@ -283,10 +418,16 @@ export function stepPreview(offset) {
 
 export function selectSubdir(subdir) {
   state.currentSubdir = subdir;
+  ensureExpandedForCurrentSubdir();
   renderFiles();
 }
 
 export function resetCurrentSubdir() {
   state.currentSubdir = "";
+  renderFiles();
+}
+
+export function toggleDirectoryCollapse(path) {
+  state.collapsedDirs[path] = !state.collapsedDirs[path];
   renderFiles();
 }

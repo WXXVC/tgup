@@ -1,14 +1,17 @@
-import { state } from "./store.js";
+﻿import { state } from "./store.js";
 import { api, debounce, pushToast, setGlobalBanner, setText } from "./utils.js";
 import {
   clearFileSelection,
   handlePreview,
+  initPreviewSize,
   loadFiles,
   renderFiles,
   resetCurrentSubdir,
   selectSubdir,
+  setPreviewSize,
   selectVisibleFiles,
   stepPreview,
+  toggleDirectoryCollapse,
 } from "./files.js";
 import {
   fillChannelForm,
@@ -24,6 +27,7 @@ import {
   clearUploads,
   copyTaskField,
   deleteSelectedUploads,
+  loadUploadStats,
   loadUploads,
   renderUploads,
   retrySelectedUploads,
@@ -34,6 +38,82 @@ import {
 } from "./uploads.js";
 
 let refreshTimer = null;
+
+const TAB_ROUTE_MAP = {
+  settings: "/setting",
+  files: "/dir",
+  uploads: "/upload",
+};
+
+function normalizePath(pathname = "/") {
+  if (!pathname || pathname === "/") return "/";
+  const normalized = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+  return ["/login", "/dir", "/setting", "/upload"].includes(normalized) ? normalized : "/";
+}
+
+function getTabForPath(pathname) {
+  const path = normalizePath(pathname);
+  if (path === "/dir") return "files";
+  if (path === "/upload") return "uploads";
+  return "settings";
+}
+
+function pushRoute(pathname, { replace = false } = {}) {
+  const nextPath = normalizePath(pathname);
+  if (window.location.pathname !== nextPath) {
+    window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
+  }
+  state.routePath = nextPath;
+}
+
+function syncTabWithRoute(pathname = window.location.pathname) {
+  const path = normalizePath(pathname);
+  state.routePath = path;
+  if (path !== "/login") {
+    state.activeTab = getTabForPath(path);
+  }
+}
+
+function applyRouteVisibility() {
+  const isLoginRoute = state.routePath === "/login";
+  document.querySelector(".topbar")?.classList.toggle("hidden", isLoginRoute);
+  document.querySelector(".shell")?.classList.toggle("hidden", isLoginRoute);
+}
+
+function resolveRouteAfterAccess() {
+  const currentPath = normalizePath(window.location.pathname);
+  const requiresLogin = state.access.enabled && !state.access.authorized;
+
+  if (currentPath === "/") {
+    if (requiresLogin) {
+      pushRoute("/login", { replace: true });
+      return true;
+    }
+    pushRoute("/dir", { replace: true });
+    syncTabWithRoute("/dir");
+    return false;
+  }
+
+  if (!state.access.enabled && currentPath === "/login") {
+    pushRoute("/dir", { replace: true });
+    syncTabWithRoute("/dir");
+    return false;
+  }
+
+  if (requiresLogin && currentPath !== "/login") {
+    pushRoute("/login", { replace: true });
+    return true;
+  }
+
+  if (!requiresLogin && currentPath === "/login") {
+    pushRoute("/dir", { replace: true });
+    syncTabWithRoute("/dir");
+    return false;
+  }
+
+  syncTabWithRoute(currentPath);
+  return currentPath === "/login";
+}
 
 function setBrowserSidebarCollapsed(collapsed) {
   const layout = document.querySelector(".browser-layout");
@@ -93,10 +173,28 @@ function initFileColumnControl() {
   });
 }
 
+function initTaskColumnControl() {
+  const control = document.getElementById("task-columns");
+  if (!control) return;
+
+  const saved = window.localStorage.getItem("tgup:task-columns");
+  const normalized = ["3", "4", "5", "6"].includes(saved || "") ? Number(saved) : state.taskColumns;
+  state.taskColumns = normalized;
+  control.value = String(normalized);
+
+  control.addEventListener("change", (event) => {
+    const value = Number(event.target.value);
+    state.taskColumns = [3, 4, 5, 6].includes(value) ? value : 3;
+    window.localStorage.setItem("tgup:task-columns", String(state.taskColumns));
+    renderUploads();
+  });
+}
+
 function renderAccessScreen() {
   const screen = document.getElementById("access-screen");
-  const shouldLock = state.access.enabled && !state.access.authorized;
+  const shouldLock = state.routePath === "/login" || (state.access.enabled && !state.access.authorized);
   screen.classList.toggle("hidden", !shouldLock);
+  applyRouteVisibility();
 }
 
 async function loadAccessStatus() {
@@ -126,10 +224,27 @@ function renderSettingsTabs() {
   });
 }
 
-function setActiveTab(tab) {
+async function setActiveTab(tab, options = {}) {
+  const { updateHistory = true } = options;
   state.activeTab = tab;
+  if (updateHistory) {
+    pushRoute(TAB_ROUTE_MAP[tab] || "/setting");
+  } else {
+    state.routePath = TAB_ROUTE_MAP[tab] || "/setting";
+  }
   renderTabs();
+  renderAccessScreen();
   refreshPolling();
+  if (state.access.enabled && !state.access.authorized) {
+    return;
+  }
+  if (tab === "uploads") {
+    await loadUploads();
+    return;
+  }
+  if (tab === "files" && state.selectedFolderId && state.files.length === 0) {
+    await loadFiles(state.selectedFolderId, false);
+  }
 }
 
 function setActiveSettingsTab(tab) {
@@ -143,10 +258,14 @@ async function refreshDashboard() {
   }
   setText("global-status", "正在同步页面数据…");
   try {
-    await Promise.all([loadSettings(), loadUploads()]);
-    if (state.selectedFolderId) {
-      await loadFiles(state.selectedFolderId, false);
+    const jobs = [loadSettings(), loadUploadStats()];
+    if (state.activeTab === "uploads") {
+      jobs.push(loadUploads());
     }
+    if (state.activeTab === "files" && state.selectedFolderId) {
+      jobs.push(loadFiles(state.selectedFolderId, false));
+    }
+    await Promise.all(jobs);
     if (!state.ui.errors.settings && !state.ui.errors.uploads && !state.ui.errors.files) {
       setGlobalBanner("");
     }
@@ -170,7 +289,6 @@ async function refreshActiveTabData() {
     }
     if (state.activeTab === "uploads") {
       await loadUploads();
-      return;
     }
   } finally {
     setText("global-status", "已同步");
@@ -182,12 +300,6 @@ function refreshPolling() {
     window.clearInterval(refreshTimer);
     refreshTimer = null;
   }
-  if (state.activeTab !== "uploads") {
-    return;
-  }
-  refreshTimer = window.setInterval(async () => {
-    await refreshActiveTabData();
-  }, 5000);
 }
 
 async function handlePanelAction(targetId) {
@@ -238,6 +350,7 @@ async function handleAction(event) {
     }
     if (action === "browse-folder") {
       document.getElementById("browser-folder").value = id;
+      await setActiveTab("files");
       await loadFiles(id);
       return;
     }
@@ -269,6 +382,9 @@ async function handleAction(event) {
 function wireEvents() {
   initBrowserSidebarToggle();
   initFileColumnControl();
+  initTaskColumnControl();
+  initPreviewSize();
+
   const debouncedFileSearch = debounce((value) => {
     state.fileSearch = value.trim().toLowerCase();
     renderFiles();
@@ -279,6 +395,7 @@ function wireEvents() {
   });
 
   document.getElementById("refresh-all").addEventListener("click", refreshDashboard);
+
   document.getElementById("access-login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     setText("access-login-error", "");
@@ -288,6 +405,9 @@ function wireEvents() {
       });
       document.getElementById("access-login-password").value = "";
       state.access.authorized = true;
+      pushRoute("/dir", { replace: true });
+      syncTabWithRoute("/dir");
+      renderTabs();
       renderAccessScreen();
       await refreshDashboard();
       pushToast("访问验证成功", "success");
@@ -295,16 +415,36 @@ function wireEvents() {
       setText("access-login-error", error.message);
     }
   });
+
   document.querySelectorAll("[data-tab-trigger]").forEach((button) => {
-    button.addEventListener("click", () => {
-      setActiveTab(button.dataset.tabTrigger);
+    button.addEventListener("click", async () => {
+      await setActiveTab(button.dataset.tabTrigger);
     });
   });
+
+  window.addEventListener("popstate", async () => {
+    syncTabWithRoute(window.location.pathname);
+    renderTabs();
+    renderAccessScreen();
+    if (state.access.enabled && !state.access.authorized) {
+      return;
+    }
+    if (state.activeTab === "uploads") {
+      await loadUploads();
+      return;
+    }
+    if (state.activeTab === "files" && state.selectedFolderId) {
+      await loadFiles(state.selectedFolderId, false);
+    }
+  });
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       refreshPolling();
+      void refreshActiveTabData();
     }
   });
+
   document.querySelectorAll("[data-settings-tab-trigger]").forEach((button) => {
     button.addEventListener("click", () => {
       setActiveSettingsTab(button.dataset.settingsTabTrigger);
@@ -314,9 +454,9 @@ function wireEvents() {
   document.getElementById("api-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const payload = {
-      api_id: Number(document.getElementById("api-id").value),
-      api_hash: document.getElementById("api-hash").value,
-      phone_number: document.getElementById("phone-number").value,
+      api_id: document.getElementById("api-id").value.trim() ? Number(document.getElementById("api-id").value) : null,
+      api_hash: document.getElementById("api-hash").value.trim(),
+      phone_number: document.getElementById("phone-number").value.trim(),
     };
     await submitJson("/api/auth/start", payload);
     setSettingsFormDirty("api", false);
@@ -339,6 +479,7 @@ function wireEvents() {
     await loadSettings();
     pushToast("二次验证密码已提交", "success");
   });
+
   document.getElementById("access-password-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     await submitJson("/api/access/password", {
@@ -347,13 +488,20 @@ function wireEvents() {
     document.getElementById("access-password-input").value = "";
     setSettingsFormDirty("access", false);
     await loadAccessStatus();
+    resolveRouteAfterAccess();
+    renderTabs();
+    renderAccessScreen();
     await loadSettings();
     pushToast("访问密码已保存", "success");
   });
+
   document.getElementById("access-password-clear").addEventListener("click", async () => {
     await api("/api/access/password", { method: "DELETE", headers: {} });
     setSettingsFormDirty("access", false);
     await loadAccessStatus();
+    resolveRouteAfterAccess();
+    renderTabs();
+    renderAccessScreen();
     await loadSettings();
     pushToast("访问密码已清除", "success");
   });
@@ -395,24 +543,12 @@ function wireEvents() {
 
   document.getElementById("channel-reset").addEventListener("click", resetChannelForm);
   document.getElementById("folder-reset").addEventListener("click", resetFolderForm);
-  document.getElementById("api-form").addEventListener("input", () => {
-    setSettingsFormDirty("api", true);
-  });
-  document.getElementById("channel-form").addEventListener("input", () => {
-    setSettingsFormDirty("channel", true);
-  });
-  document.getElementById("channel-form").addEventListener("change", () => {
-    setSettingsFormDirty("channel", true);
-  });
-  document.getElementById("folder-form").addEventListener("input", () => {
-    setSettingsFormDirty("folder", true);
-  });
-  document.getElementById("folder-form").addEventListener("change", () => {
-    setSettingsFormDirty("folder", true);
-  });
-  document.getElementById("access-password-form").addEventListener("input", () => {
-    setSettingsFormDirty("access", true);
-  });
+  document.getElementById("api-form").addEventListener("input", () => setSettingsFormDirty("api", true));
+  document.getElementById("channel-form").addEventListener("input", () => setSettingsFormDirty("channel", true));
+  document.getElementById("channel-form").addEventListener("change", () => setSettingsFormDirty("channel", true));
+  document.getElementById("folder-form").addEventListener("input", () => setSettingsFormDirty("folder", true));
+  document.getElementById("folder-form").addEventListener("change", () => setSettingsFormDirty("folder", true));
+  document.getElementById("access-password-form").addEventListener("input", () => setSettingsFormDirty("access", true));
 
   document.getElementById("browser-folder").addEventListener("change", async (event) => {
     await loadFiles(event.target.value);
@@ -473,8 +609,9 @@ function wireEvents() {
     await api(`/api/folders/${state.selectedFolderId}/scan`, { method: "POST", headers: {} });
     await loadFiles(state.selectedFolderId, false);
     await loadUploads();
-    pushToast("正在刷新当前目录", "success");
+    pushToast("当前目录已重新扫描", "success");
   });
+
   document.getElementById("browser-refresh").addEventListener("click", async () => {
     if (!state.selectedFolderId) return;
     await loadFiles(state.selectedFolderId, false);
@@ -483,6 +620,11 @@ function wireEvents() {
 
   document.getElementById("browser-upload").addEventListener("click", async () => {
     if (!state.selectedFolderId || state.selectedFiles.size === 0) return;
+    const selectedFiles = state.files.filter((file) => state.selectedFiles.has(file.relative_path));
+    const hasUploadedFiles = selectedFiles.some((file) => file.status === "uploaded");
+    if (hasUploadedFiles && !window.confirm("确认重新上传已上传文件吗？")) {
+      return;
+    }
     await submitJson("/api/uploads/manual", {
       folder_id: state.selectedFolderId,
       relative_paths: Array.from(state.selectedFiles),
@@ -494,6 +636,7 @@ function wireEvents() {
   document.getElementById("clear-finished").addEventListener("click", async () => {
     await clearUploads("finished");
   });
+
   document.getElementById("upload-refresh").addEventListener("click", async () => {
     await loadUploads();
     pushToast("任务列表已刷新", "success");
@@ -528,15 +671,24 @@ function wireEvents() {
       await handlePanelAction(event.target.id);
       return;
     }
+
+    const toggleButton = event.target.closest("[data-tree-toggle]");
+    if (toggleButton) {
+      toggleDirectoryCollapse(toggleButton.dataset.treeToggle);
+      return;
+    }
+
     const subdirButton = event.target.closest("[data-subdir]");
     if (subdirButton) {
       selectSubdir(subdirButton.dataset.subdir);
       return;
     }
+
     if (event.target.closest("button[data-action]") || event.target.closest("[data-group-toggle]")) {
       await handleAction(event);
       return;
     }
+
     const preview = event.target.closest("[data-preview]");
     if (preview) {
       await handlePreview(preview.dataset.preview);
@@ -591,6 +743,12 @@ function wireEvents() {
   document.getElementById("preview-next").addEventListener("click", () => {
     stepPreview(1);
   });
+  document.querySelectorAll("[data-preview-size]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setPreviewSize(button.dataset.previewSize);
+    });
+  });
+
   document.getElementById("task-detail-close").addEventListener("click", () => {
     document.getElementById("task-detail-dialog").close();
   });
@@ -600,8 +758,10 @@ function wireEvents() {
   document.getElementById("copy-task-path").addEventListener("click", async () => {
     await copyTaskField("path");
   });
+
   window.addEventListener("app-unauthorized", async () => {
     state.access.authorized = false;
+    pushRoute("/login", { replace: true });
     renderAccessScreen();
     setText("access-login-error", "访问已失效，请重新输入密码");
     await loadAccessStatus().catch(() => {});
@@ -609,11 +769,16 @@ function wireEvents() {
 }
 
 async function boot() {
+  syncTabWithRoute(window.location.pathname);
   renderTabs();
   renderSettingsTabs();
+  renderUploads();
   wireEvents();
   await loadAccessStatus();
-  if (state.access.enabled && !state.access.authorized) {
+  const lockRoute = resolveRouteAfterAccess();
+  renderTabs();
+  renderAccessScreen();
+  if (lockRoute || (state.access.enabled && !state.access.authorized)) {
     return;
   }
   await refreshDashboard();

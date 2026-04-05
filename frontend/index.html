@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -23,9 +23,9 @@
       <div class="topbar-brand">
         <div class="brand-mark" aria-hidden="true">TG</div>
         <div>
-          <h1>上传控制台</h1>
+          <h1>控制台</h1>
         </div>
-        <button id="refresh-all" class="ghost" type="button">刷新全部</button>
+        <button id="refresh-all" class="ghost" type="button">刷新</button>
       </div>
       <div class="topbar-status">
         <div class="status-card login-card">
@@ -134,17 +134,18 @@
                 <span class="section-note">登录态与会话自动持久化</span>
               </div>
               <form id="api-form" class="stack">
+                <p class="form-hint">已保存参数会以脱敏形式展示；留空提交表示沿用当前已保存配置，重新填写才会覆盖。</p>
                 <label>
                   <span>API ID</span>
-                  <input id="api-id" name="api_id" type="number" required>
+                  <input id="api-id" name="api_id" type="number" inputmode="numeric">
                 </label>
                 <label>
                   <span>API Hash</span>
-                  <input id="api-hash" name="api_hash" required>
+                  <input id="api-hash" name="api_hash">
                 </label>
                 <label>
                   <span>手机号</span>
-                  <input id="phone-number" name="phone_number" required>
+                  <input id="phone-number" name="phone_number">
                 </label>
                 <div class="actions">
                   <button type="submit">开始登录</button>
@@ -253,37 +254,37 @@
               <h2>目录浏览与手动上传</h2>
             </div>
             <div class="toolbar dense toolbar-compact file-toolbar">
-                <select id="file-columns">
-                  <option value="3">每行 3 个</option>
-                  <option value="4" selected>每行 4 个</option>
-                  <option value="5">每行 5 个</option>
-                  <option value="6">每行 6 个</option>
-                </select>
-                <select id="browser-folder"></select>
-                <select id="file-type-filter">
-                  <option value="all">全部类型</option>
-                  <option value="video">视频</option>
-                  <option value="image">图片</option>
-                  <option value="music">音乐</option>
-                  <option value="document">文档</option>
-                  <option value="other">其他</option>
-                </select>
-                <select id="file-status-filter">
-                  <option value="all">全部状态</option>
-                  <option value="pending">未上传</option>
-                  <option value="uploaded">已上传</option>
-                  <option value="locked">占用中</option>
-                </select>
-                <select id="file-scope-filter">
-                  <option value="recursive">包含子目录</option>
-                  <option value="direct">仅当前目录</option>
-                </select>
-                <input id="file-search" placeholder="搜索文件名或路径">
-                <button id="browser-refresh" class="ghost" type="button">刷新列表</button>
-                <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
-                <button id="clear-file-selection" class="ghost" type="button">清空选择</button>
-                <button id="browser-scan" class="ghost" type="button">立即扫描</button>
-                <button id="browser-upload" type="button">上传选中</button>
+              <select id="file-columns">
+                <option value="3">每行 3 个</option>
+                <option value="4" selected>每行 4 个</option>
+                <option value="5">每行 5 个</option>
+                <option value="6">每行 6 个</option>
+              </select>
+              <select id="browser-folder"></select>
+              <select id="file-type-filter">
+                <option value="all">全部类型</option>
+                <option value="video">视频</option>
+                <option value="image">图片</option>
+                <option value="music">音乐</option>
+                <option value="document">文档</option>
+                <option value="other">其他</option>
+              </select>
+              <select id="file-status-filter">
+                <option value="all">全部状态</option>
+                <option value="pending">未上传</option>
+                <option value="uploaded">已上传</option>
+                <option value="locked">占用中</option>
+              </select>
+              <select id="file-scope-filter">
+                <option value="recursive">包含子目录</option>
+                <option value="direct">仅当前目录</option>
+              </select>
+              <input id="file-search" placeholder="搜索文件名或路径">
+              <button id="browser-refresh" class="ghost" type="button">刷新列表</button>
+              <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
+              <button id="clear-file-selection" class="ghost" type="button">清空选择</button>
+              <button id="browser-scan" class="ghost" type="button">立即扫描</button>
+              <button id="browser-upload" type="button">上传选中</button>
             </div>
             <div id="file-stats" class="stats-grid"></div>
             <div id="file-summary" class="muted">请选择监控目录</div>
@@ -311,32 +312,39 @@
               <h2>上传任务</h2>
             </div>
             <div class="toolbar dense toolbar-compact upload-toolbar">
-                <select id="task-folder-filter">
-                  <option value="all">全部目录</option>
-                </select>
-                <select id="task-status-filter">
-                  <option value="all">全部状态</option>
-                  <option value="pending">未上传</option>
-                  <option value="uploading">上传中</option>
-                  <option value="uploaded">已上传</option>
-                  <option value="failed">失败</option>
-                  <option value="locked">占用中</option>
-                </select>
-                <select id="task-sort">
-                  <option value="updated_desc">最近更新</option>
-                  <option value="created_desc">最近创建</option>
-                  <option value="progress_desc">进度最高</option>
-                  <option value="name_asc">文件名 A-Z</option>
-                </select>
-                <input id="task-search" placeholder="搜索任务或错误信息">
-                <button id="upload-refresh" class="ghost" type="button">刷新任务</button>
-                <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
-                <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
-                <button id="retry-selected" class="ghost" type="button">重试选中</button>
-                <button id="delete-selected" class="ghost" type="button">清理选中</button>
-                <button id="clear-finished" class="ghost" type="button">清理已完成</button>
-                <button id="clear-failed" class="ghost" type="button">清理失败/占用</button>
-                <button id="clear-all" class="ghost" type="button">清理全部</button>
+              <select id="task-columns">
+                <option value="3" selected>每行 3 个</option>
+                <option value="4">每行 4 个</option>
+                <option value="5">每行 5 个</option>
+                <option value="6">每行 6 个</option>
+              </select>
+              <select id="task-folder-filter">
+                <option value="all">全部目录</option>
+              </select>
+              <select id="task-status-filter">
+                <option value="all">全部状态</option>
+                <option value="pending">未上传</option>
+                <option value="uploading">上传中</option>
+                <option value="uploaded">已上传</option>
+                <option value="failed">失败</option>
+                <option value="locked">占用中</option>
+              </select>
+              <select id="task-sort">
+                <option value="updated_desc">最近更新</option>
+                <option value="created_desc">最近创建</option>
+                <option value="progress_desc">进度最高</option>
+                <option value="name_asc">文件名 A-Z</option>
+              </select>
+              <input id="task-search" placeholder="搜索任务或错误信息">
+              <button id="upload-refresh" class="ghost" type="button">刷新任务</button>
+              <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
+              <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
+              <button id="retry-selected" class="ghost" type="button">重试选中</button>
+              <button id="delete-selected" class="ghost" type="button">清理选中</button>
+              <button id="clear-finished" class="ghost" type="button">清理已完成</button>
+              <button id="clear-failed" class="ghost" type="button">清理失败/占用</button>
+              <button id="clear-all" class="ghost" type="button">清理全部</button>
+            </div>
             <div id="upload-feedback" class="panel-feedback hidden"></div>
             <div id="upload-summary" class="muted upload-summary"></div>
             <div id="upload-list" class="upload-list"></div>
@@ -348,6 +356,11 @@
 
   <dialog id="preview-dialog">
     <div class="dialog-toolbar">
+      <div class="preview-size-group" role="group" aria-label="预览尺寸">
+        <button id="preview-size-small" class="ghost" type="button" data-preview-size="small">小</button>
+        <button id="preview-size-medium" class="ghost" type="button" data-preview-size="medium">中</button>
+        <button id="preview-size-large" class="ghost" type="button" data-preview-size="large">大</button>
+      </div>
       <button id="preview-prev" class="ghost" type="button">上一项</button>
       <button id="preview-next" class="ghost" type="button">下一项</button>
       <button id="preview-close" class="preview-close" type="button">关闭</button>

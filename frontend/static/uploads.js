@@ -1,4 +1,4 @@
-import { TASK_STATUS_ORDER } from "./constants.js";
+﻿import { TASK_STATUS_ORDER } from "./constants.js";
 import { getTaskById, isRetryableTask, isTerminalTask, state } from "./store.js";
 import {
   api,
@@ -11,6 +11,17 @@ import {
   taskSkeleton,
 } from "./utils.js";
 import { submitJson } from "./settings.js";
+
+function emptyStats() {
+  return {
+    total: 0,
+    pending: 0,
+    uploading: 0,
+    uploaded: 0,
+    failed: 0,
+    locked: 0,
+  };
+}
 
 export async function loadUploads() {
   state.ui.loading.uploads = true;
@@ -34,15 +45,18 @@ export async function loadUploads() {
   }
 }
 
+export async function loadUploadStats() {
+  try {
+    state.uploadStats = await api("/api/uploads/stats");
+    renderUploadStats();
+  } catch {
+    state.uploadStats = state.uploadStats || emptyStats();
+    renderUploadStats();
+  }
+}
+
 function renderUploadStats() {
-  const stats = state.uploadStats || {
-    total: 0,
-    pending: 0,
-    uploading: 0,
-    uploaded: 0,
-    failed: 0,
-    locked: 0,
-  };
+  const stats = state.uploadStats || emptyStats();
   const markup = `
     <article class="top-stat-card">
       <strong>${stats.total}</strong>
@@ -121,9 +135,10 @@ export function renderUploads() {
   const container = document.getElementById("upload-list");
   const summary = document.getElementById("upload-summary");
   const selectedCount = tasks.filter((task) => state.selectedUploadTaskIds.has(task.id)).length;
+  container.style.setProperty("--task-columns", String(state.taskColumns));
 
   if (summary) {
-    summary.textContent = `鍏?${state.uploads.length} 涓换鍔★紝绛涢€夊悗 ${tasks.length} 涓紝宸查€?${selectedCount} 涓?`;
+    summary.textContent = `总任务 ${state.uploads.length} 个，筛选后 ${tasks.length} 个，已选中 ${selectedCount} 个`;
   }
 
   if (state.ui.loading.uploads) {
@@ -134,7 +149,7 @@ export function renderUploads() {
       message: "任务状态和统计信息正在刷新。",
     });
     if (summary) {
-      summary.textContent = "姝ｅ湪鍚屾浠诲姟鍒楄〃鈥?";
+      summary.textContent = "正在同步任务列表...";
     }
     container.innerHTML = taskSkeleton();
     return;
@@ -150,7 +165,7 @@ export function renderUploads() {
       actionId: "retry-uploads",
     });
     if (summary) {
-      summary.textContent = "浠诲姟鍒楄〃鍔犺浇澶辫触";
+      summary.textContent = "任务列表加载失败";
     }
     container.innerHTML = "";
     return;
@@ -160,7 +175,9 @@ export function renderUploads() {
     visible: tasks.length === 0,
     tone: "empty",
     title: "没有匹配的上传任务",
-    message: state.uploads.length ? "可以调整筛选条件，或者稍后等待新任务入队。" : "当前还没有上传任务，先去目录里发起手动上传吧。",
+    message: state.uploads.length
+      ? "可以调整筛选条件，或者稍后等待新任务入队。"
+      : "当前还没有上传任务，先去目录里发起手动上传吧。",
     actionLabel: state.uploads.length ? "" : "刷新",
     actionId: state.uploads.length ? "" : "retry-uploads",
   });
@@ -181,17 +198,12 @@ export function renderUploads() {
             <h3>${escapeHtml(task.relative_path)}</h3>
             <p class="muted">${escapeHtml(task.caption || "-")}</p>
           </div>
-          ${labeledBadge(task.status)}
-        </div>
-        <div class="meta upload-task-meta">
-          <label class="inline-check">
-            <input type="checkbox" data-task-select="${task.id}" ${state.selectedUploadTaskIds.has(task.id) ? "checked" : ""}>
-            <span>选中</span>
-          </label>
-          <span>目录: ${escapeHtml(task.folder_id)}</span>
-          <span>频道: ${escapeHtml(task.channel_id)}</span>
-          <span>更新时间: ${new Date(task.updated_at * 1000).toLocaleString()}</span>
-          <span>批量文件: ${Array.isArray(task.batch_paths) ? task.batch_paths.length : 1}</span>
+          <div class="upload-task-top-actions">
+            ${labeledBadge(task.status)}
+            <label class="inline-check upload-task-check">
+              <input type="checkbox" data-task-select="${task.id}" ${state.selectedUploadTaskIds.has(task.id) ? "checked" : ""}>
+            </label>
+          </div>
         </div>
         <div class="progress"><span style="width:${task.progress || 0}%"></span></div>
         <div class="meta upload-task-meta upload-task-meta-strong">
@@ -225,7 +237,7 @@ export async function deleteSelectedUploads() {
   }
   const deletableIds = [...state.selectedUploadTaskIds].filter((taskId) => isTerminalTask(getTaskById(taskId)));
   if (deletableIds.length === 0) {
-    pushToast("当前选中的任务没有可清理项", "info");
+    pushToast("当前选中的任务里没有可清理项", "info");
     return;
   }
   await api("/api/uploads/delete-batch", {
@@ -243,7 +255,7 @@ export async function retrySelectedUploads() {
   }
   const retryableIds = [...state.selectedUploadTaskIds].filter((taskId) => isRetryableTask(getTaskById(taskId)));
   if (retryableIds.length === 0) {
-    pushToast("当前选中的任务没有可重试项", "info");
+    pushToast("当前选中的任务里没有可重试项", "info");
     return;
   }
   await submitJson("/api/uploads/retry-batch", {

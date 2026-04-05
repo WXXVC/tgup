@@ -1,4 +1,4 @@
-export const STATUS_LABELS = {
+﻿export const STATUS_LABELS = {
   pending: "未上传",
   uploading: "上传中",
   uploaded: "已上传",

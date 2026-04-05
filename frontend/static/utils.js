@@ -1,4 +1,4 @@
-import {
+﻿import {
   FILE_TYPE_LABELS,
   SEARCH_DEBOUNCE_MS,
   STATUS_LABELS,

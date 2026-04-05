@@ -18,13 +18,16 @@ export const state = {
   fileStatusFilter: "all",
   fileSearch: "",
   fileColumns: 4,
+  taskColumns: 3,
   taskFolderFilter: "all",
   taskStatusFilter: "all",
   taskSearch: "",
   taskSort: "updated_desc",
+  routePath: "/",
   activeTab: "settings",
   activeSettingsTab: "access",
   collapsedTaskGroups: {},
+  collapsedDirs: {},
   access: {
     enabled: false,
     authorized: true,
@@ -49,6 +52,7 @@ export const state = {
     },
   },
   previewRelativePath: "",
+  previewSize: "medium",
   activeTaskDetailId: "",
 };
 

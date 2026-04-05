@@ -1,4 +1,4 @@
-import { state } from "./store.js";
+﻿import { state } from "./store.js";
 import {
   api,
   escapeHtml,
@@ -50,10 +50,17 @@ export function renderSettings() {
   if (!settings) return;
 
   if (shouldHydrateSettingsForm("api")) {
-    document.getElementById("api-id").value = settings.api.api_id || "";
-    document.getElementById("api-hash").value = settings.api.api_hash || "";
-    document.getElementById("phone-number").value = settings.api.phone_number || "";
+    const apiIdInput = document.getElementById("api-id");
+    const apiHashInput = document.getElementById("api-hash");
+    const phoneInput = document.getElementById("phone-number");
+    apiIdInput.value = "";
+    apiHashInput.value = "";
+    phoneInput.value = "";
+    apiIdInput.placeholder = settings.api.api_id || "未填写则沿用已保存的 API ID";
+    apiHashInput.placeholder = settings.api.api_hash || "未填写则沿用已保存的 API Hash";
+    phoneInput.placeholder = settings.api.phone_number || "未填写则沿用已保存的手机号";
   }
+
   setText("access-password-status", settings.access_password_enabled ? "已启用访问密码" : "未设置访问密码");
   setText("login-stage", statusLabel(login.stage));
   setText("login-error", state.ui.errors.settings || login.last_error || "");
@@ -106,7 +113,7 @@ export function renderSettings() {
           <span>频道: ${escapeHtml(channel ? channel.name : "未找到")}</span>
           <span>自动上传: ${folder.auto_upload ? "开" : "关"}</span>
           <span>扫描: ${folder.scan_interval_seconds}s</span>
-          <span>处理: ${folder.post_upload_action}</span>
+          <span>处理: ${escapeHtml(folder.post_upload_action)}</span>
         </div>
         <div class="item-actions">
           <button data-action="browse-folder" data-id="${folder.id}" class="ghost">浏览文件</button>

@@ -53,10 +53,10 @@ class UploadManager:
         if not normalized:
             raise ValueError("no files selected")
         if len(normalized) > 1 and self._all_media(folder, normalized):
-            await self._enqueue_task(folder, normalized[0], normalized)
+            await self._enqueue_task(folder, normalized[0], normalized, force=True)
             return
         for relative_path in normalized:
-            await self._enqueue_task(folder, relative_path, [relative_path])
+            await self._enqueue_task(folder, relative_path, [relative_path], force=True)
 
     async def trigger_scan(self, folder_id: str | None = None) -> None:
         folders = self.settings_service.settings.folders
@@ -123,6 +123,7 @@ class UploadManager:
         folder: FolderConfig,
         relative_path: str,
         batch_paths: list[str],
+        force: bool = False,
     ) -> None:
         root = Path(folder.path)
         absolute_path = root / relative_path
@@ -132,7 +133,7 @@ class UploadManager:
         if signature in self.pending_signatures:
             return
         stat = absolute_path.stat()
-        if len(batch_paths) == 1 and self.upload_repo.is_uploaded(
+        if not force and len(batch_paths) == 1 and self.upload_repo.is_uploaded(
             folder.id,
             relative_path,
             stat.st_size,

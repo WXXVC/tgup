@@ -6,7 +6,7 @@ import secrets
 from pathlib import Path
 from uuid import uuid4
 
-from .models import AccessPasswordRequest, AppSettings, ChannelConfig, ChannelPayload, FolderConfig, FolderPayload
+from .models import AccessPasswordRequest, AppSettings, ChannelConfig, ChannelPayload, FolderConfig, FolderPayload, LoginStartRequest
 from .storage import SettingsStore
 
 
@@ -29,14 +29,54 @@ class SettingsService:
         self._settings.api.phone_number = phone_number
         return self.save()
 
+    def resolve_api_payload(self, payload: LoginStartRequest) -> tuple[int, str, str]:
+        api_id = payload.api_id if payload.api_id is not None else self._settings.api.api_id
+        api_hash = payload.api_hash.strip() or self._settings.api.api_hash
+        phone_number = payload.phone_number.strip() or self._settings.api.phone_number
+        if api_id is None or not api_hash or not phone_number:
+            raise ValueError("api credentials are incomplete")
+        return api_id, api_hash, phone_number
+
     def has_access_password(self) -> bool:
         return bool(self._settings.access_password_hash)
 
     def public_settings(self) -> dict:
         payload = self._settings.model_dump(mode="json")
         payload.pop("access_password_hash", None)
+        payload["api"] = {
+            "api_id": self._mask_api_id(self._settings.api.api_id),
+            "api_hash": self._mask_secret(self._settings.api.api_hash),
+            "phone_number": self._mask_phone(self._settings.api.phone_number),
+            "api_id_saved": self._settings.api.api_id is not None,
+            "api_hash_saved": bool(self._settings.api.api_hash),
+            "phone_number_saved": bool(self._settings.api.phone_number),
+        }
         payload["access_password_enabled"] = self.has_access_password()
         return payload
+
+    def _mask_api_id(self, value: int | None) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        if len(text) <= 2:
+            return "*" * len(text)
+        return f"{text[:1]}{'*' * max(1, len(text) - 2)}{text[-1:]}"
+
+    def _mask_secret(self, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        if len(value) <= 6:
+            return "*" * len(value)
+        return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
+
+    def _mask_phone(self, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        if len(value) <= 4:
+            return "*" * len(value)
+        return f"{value[:3]}{'*' * max(1, len(value) - 5)}{value[-2:]}"
 
     def set_access_password(self, password: str) -> AppSettings:
         password = password.strip()
