@@ -3,13 +3,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
 from .models import (
+    AccessPasswordRequest,
     ChannelPayload,
     FolderPayload,
     LoginCodeRequest,
@@ -34,6 +35,7 @@ upload_repo = UploadRepository()
 telegram = TelegramSessionManager()
 scanner = FolderScanner(upload_repo)
 upload_manager = UploadManager(settings_service, upload_repo, scanner, telegram)
+ACCESS_COOKIE_NAME = "tgup_access"
 
 
 @asynccontextmanager
@@ -60,6 +62,22 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+def is_public_path(path: str) -> bool:
+    return path == "/" or path.startswith("/static/") or path in {
+        "/api/access/status",
+        "/api/access/login",
+    }
+
+
+@app.middleware("http")
+async def access_password_guard(request: Request, call_next):
+    if is_public_path(request.url.path):
+        return await call_next(request)
+    if settings_service.is_access_token_valid(request.cookies.get(ACCESS_COOKIE_NAME)):
+        return await call_next(request)
+    return JSONResponse(status_code=401, content={"detail": "access password required"})
+
+
 @app.get("/")
 async def index():
     if not (frontend_dir / "index.html").exists():
@@ -70,9 +88,58 @@ async def index():
 @app.get("/api/settings")
 async def get_settings():
     return {
-        "settings": settings_service.settings.model_dump(mode="json"),
+        "settings": settings_service.public_settings(),
         "login": telegram.status(),
     }
+
+
+@app.get("/api/access/status")
+async def access_status(request: Request):
+    return {
+        "enabled": settings_service.has_access_password(),
+        "authorized": settings_service.is_access_token_valid(request.cookies.get(ACCESS_COOKIE_NAME)),
+    }
+
+
+@app.post("/api/access/login")
+async def access_login(payload: AccessPasswordRequest):
+    if settings_service.has_access_password() and not settings_service.verify_access_password(payload.password):
+        raise HTTPException(status_code=401, detail="invalid access password")
+    response = JSONResponse({"ok": True})
+    if settings_service.has_access_password():
+        response.set_cookie(
+            ACCESS_COOKIE_NAME,
+            settings_service.build_access_token(),
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+    return response
+
+
+@app.post("/api/access/password")
+async def save_access_password(payload: AccessPasswordRequest):
+    try:
+        settings_service.set_access_password(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    response = JSONResponse({"ok": True})
+    response.set_cookie(
+        ACCESS_COOKIE_NAME,
+        settings_service.build_access_token(),
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@app.delete("/api/access/password")
+async def clear_access_password():
+    settings_service.clear_access_password()
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(ACCESS_COOKIE_NAME, path="/")
+    return response
 
 
 @app.post("/api/settings/api")

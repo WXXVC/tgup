@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from pathlib import Path
 from uuid import uuid4
 
-from .models import AppSettings, ChannelConfig, ChannelPayload, FolderConfig, FolderPayload
+from .models import AccessPasswordRequest, AppSettings, ChannelConfig, ChannelPayload, FolderConfig, FolderPayload
 from .storage import SettingsStore
 
 
@@ -25,6 +28,50 @@ class SettingsService:
         self._settings.api.api_hash = api_hash
         self._settings.api.phone_number = phone_number
         return self.save()
+
+    def has_access_password(self) -> bool:
+        return bool(self._settings.access_password_hash)
+
+    def public_settings(self) -> dict:
+        payload = self._settings.model_dump(mode="json")
+        payload.pop("access_password_hash", None)
+        payload["access_password_enabled"] = self.has_access_password()
+        return payload
+
+    def set_access_password(self, password: str) -> AppSettings:
+        password = password.strip()
+        if len(password) < 4:
+            raise ValueError("password must be at least 4 characters")
+        salt = secrets.token_hex(16)
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000).hex()
+        self._settings.access_password_hash = f"{salt}${digest}"
+        return self.save()
+
+    def clear_access_password(self) -> AppSettings:
+        self._settings.access_password_hash = ""
+        return self.save()
+
+    def verify_access_password(self, password: str) -> bool:
+        if not self.has_access_password():
+            return True
+        try:
+            salt, expected = self._settings.access_password_hash.split("$", 1)
+        except ValueError:
+            return False
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 200000).hex()
+        return hmac.compare_digest(digest, expected)
+
+    def build_access_token(self) -> str:
+        if not self.has_access_password():
+            return ""
+        return hashlib.sha256(f"tgup:{self._settings.access_password_hash}:authorized".encode("utf-8")).hexdigest()
+
+    def is_access_token_valid(self, token: str | None) -> bool:
+        if not self.has_access_password():
+            return True
+        if not token:
+            return False
+        return hmac.compare_digest(token, self.build_access_token())
 
     def add_channel(self, payload: ChannelPayload) -> ChannelConfig:
         channel = ChannelConfig(id=str(uuid4()), **payload.model_dump())

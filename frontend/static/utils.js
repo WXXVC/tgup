@@ -7,11 +7,15 @@ import {
 
 export async function api(url, options = {}) {
   const response = await fetch(url, {
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent("app-unauthorized"));
+    }
     throw new Error(payload.detail || "请求失败");
   }
   const contentType = response.headers.get("content-type") || "";

@@ -43,15 +43,32 @@ function renderUploadStats() {
     failed: 0,
     locked: 0,
   };
-  document.getElementById("upload-stats").innerHTML = `
-    <span class="chip">总任务 ${stats.total}</span>
-    <span class="chip">未上传 ${stats.pending}</span>
-    <span class="chip">上传中 ${stats.uploading}</span>
-    <span class="chip">已上传 ${stats.uploaded}</span>
-    <span class="chip">失败 ${stats.failed}</span>
-    <span class="chip">占用中 ${stats.locked}</span>
-    <span class="chip">已选 ${state.selectedUploadTaskIds.size}</span>
+  const markup = `
+    <article class="top-stat-card">
+      <strong>${stats.total}</strong>
+      <span>总任务</span>
+    </article>
+    <article class="top-stat-card is-active">
+      <strong>${stats.uploading}</strong>
+      <span>上传中</span>
+    </article>
+    <article class="top-stat-card">
+      <strong>${stats.pending}</strong>
+      <span>待处理</span>
+    </article>
+    <article class="top-stat-card is-danger">
+      <strong>${stats.failed}</strong>
+      <span>失败</span>
+    </article>
+    <article class="top-stat-card is-success">
+      <strong>${stats.uploaded}</strong>
+      <span>已完成</span>
+    </article>
   `;
+  const topStats = document.getElementById("top-upload-stats");
+  if (topStats) {
+    topStats.innerHTML = markup;
+  }
 }
 
 function compareTasks(left, right) {
@@ -102,6 +119,12 @@ export function renderUploads() {
   const tasks = filteredUploads();
   const groups = groupTasksByStatus(tasks);
   const container = document.getElementById("upload-list");
+  const summary = document.getElementById("upload-summary");
+  const selectedCount = tasks.filter((task) => state.selectedUploadTaskIds.has(task.id)).length;
+
+  if (summary) {
+    summary.textContent = `鍏?${state.uploads.length} 涓换鍔★紝绛涢€夊悗 ${tasks.length} 涓紝宸查€?${selectedCount} 涓?`;
+  }
 
   if (state.ui.loading.uploads) {
     setPanelFeedback("upload-feedback", {
@@ -110,6 +133,9 @@ export function renderUploads() {
       title: "正在加载任务列表",
       message: "任务状态和统计信息正在刷新。",
     });
+    if (summary) {
+      summary.textContent = "姝ｅ湪鍚屾浠诲姟鍒楄〃鈥?";
+    }
     container.innerHTML = taskSkeleton();
     return;
   }
@@ -123,6 +149,9 @@ export function renderUploads() {
       actionLabel: "重试",
       actionId: "retry-uploads",
     });
+    if (summary) {
+      summary.textContent = "浠诲姟鍒楄〃鍔犺浇澶辫触";
+    }
     container.innerHTML = "";
     return;
   }
@@ -145,8 +174,8 @@ export function renderUploads() {
           <span>${statusLabel(group.status)} (${group.tasks.length})</span>
           <span>${collapsed ? "展开" : "收起"}</span>
         </button>
-        ${collapsed ? "" : group.tasks.map((task) => `
-      <article class="item">
+        ${collapsed ? "" : `<div class="task-group-list">${group.tasks.map((task) => `
+      <article class="item upload-task-item">
         <div class="item-top">
           <div>
             <h3>${escapeHtml(task.relative_path)}</h3>
@@ -154,7 +183,7 @@ export function renderUploads() {
           </div>
           ${labeledBadge(task.status)}
         </div>
-        <div class="meta">
+        <div class="meta upload-task-meta">
           <label class="inline-check">
             <input type="checkbox" data-task-select="${task.id}" ${state.selectedUploadTaskIds.has(task.id) ? "checked" : ""}>
             <span>选中</span>
@@ -165,7 +194,7 @@ export function renderUploads() {
           <span>批量文件: ${Array.isArray(task.batch_paths) ? task.batch_paths.length : 1}</span>
         </div>
         <div class="progress"><span style="width:${task.progress || 0}%"></span></div>
-        <div class="meta">
+        <div class="meta upload-task-meta upload-task-meta-strong">
           <span>进度: ${(task.progress || 0).toFixed(2)}%</span>
           ${task.error_message ? `<span class="danger">${escapeHtml(task.error_message)}</span>` : ""}
         </div>
@@ -174,7 +203,7 @@ export function renderUploads() {
           ${isRetryableTask(task) ? `<button data-action="retry-upload" data-id="${task.id}" class="ghost" type="button">重试</button>` : ""}
         </div>
       </article>
-    `).join("")}
+    `).join("")}</div>`}
       </section>`;
     }).join("")
     : `<p class="muted">当前筛选条件下没有任务。</p>`;

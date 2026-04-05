@@ -17,11 +17,19 @@ export const state = {
   fileTypeFilter: "all",
   fileStatusFilter: "all",
   fileSearch: "",
+  fileColumns: 4,
   taskFolderFilter: "all",
   taskStatusFilter: "all",
   taskSearch: "",
   taskSort: "updated_desc",
+  activeTab: "settings",
+  activeSettingsTab: "access",
   collapsedTaskGroups: {},
+  access: {
+    enabled: false,
+    authorized: true,
+    checked: false,
+  },
   ui: {
     loading: {
       settings: true,
@@ -32,6 +40,12 @@ export const state = {
       settings: "",
       files: "",
       uploads: "",
+    },
+    dirtyForms: {
+      api: false,
+      channel: false,
+      folder: false,
+      access: false,
     },
   },
   previewRelativePath: "",

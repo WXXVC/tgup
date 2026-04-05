@@ -112,6 +112,7 @@ function renderFileStats(files) {
 export function renderFiles() {
   const summary = document.getElementById("file-summary");
   const container = document.getElementById("file-list");
+  container.style.setProperty("--file-columns", String(state.fileColumns));
 
   if (!state.selectedFolderId) {
     summary.textContent = "请选择监控目录";

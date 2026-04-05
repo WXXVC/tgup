@@ -57,6 +57,7 @@ class AppSettings(BaseModel):
     api: ApiSettings = Field(default_factory=ApiSettings)
     channels: list[ChannelConfig] = Field(default_factory=list)
     folders: list[FolderConfig] = Field(default_factory=list)
+    access_password_hash: str = ""
 
 
 class LoginStartRequest(BaseModel):
@@ -70,6 +71,10 @@ class LoginCodeRequest(BaseModel):
 
 
 class LoginPasswordRequest(BaseModel):
+    password: str
+
+
+class AccessPasswordRequest(BaseModel):
     password: str
 
 

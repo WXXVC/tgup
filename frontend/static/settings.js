@@ -12,6 +12,16 @@ export async function submitJson(url, payload, method = "POST") {
   return api(url, { method, body: JSON.stringify(payload) });
 }
 
+export function setSettingsFormDirty(formName, dirty = true) {
+  if (Object.hasOwn(state.ui.dirtyForms, formName)) {
+    state.ui.dirtyForms[formName] = dirty;
+  }
+}
+
+function shouldHydrateSettingsForm(formName) {
+  return !state.ui.dirtyForms[formName];
+}
+
 export async function loadSettings() {
   state.ui.loading.settings = true;
   state.ui.errors.settings = "";
@@ -39,9 +49,12 @@ export function renderSettings() {
   const { settings, login } = state;
   if (!settings) return;
 
-  document.getElementById("api-id").value = settings.api.api_id || "";
-  document.getElementById("api-hash").value = settings.api.api_hash || "";
-  document.getElementById("phone-number").value = settings.api.phone_number || "";
+  if (shouldHydrateSettingsForm("api")) {
+    document.getElementById("api-id").value = settings.api.api_id || "";
+    document.getElementById("api-hash").value = settings.api.api_hash || "";
+    document.getElementById("phone-number").value = settings.api.phone_number || "";
+  }
+  setText("access-password-status", settings.access_password_enabled ? "已启用访问密码" : "未设置访问密码");
   setText("login-stage", statusLabel(login.stage));
   setText("login-error", state.ui.errors.settings || login.last_error || "");
   document.getElementById("code-form").style.display = login.stage === "code_required" ? "flex" : "none";
@@ -110,6 +123,7 @@ export function renderSettings() {
 export function fillChannelForm(channelId) {
   const channel = state.settings.channels.find((item) => item.id === channelId);
   if (!channel) return;
+  setSettingsFormDirty("channel", false);
   document.getElementById("channel-id").value = channel.id;
   document.getElementById("channel-name").value = channel.name;
   document.getElementById("channel-target").value = channel.target;
@@ -119,6 +133,7 @@ export function fillChannelForm(channelId) {
 export function fillFolderForm(folderId) {
   const folder = state.settings.folders.find((item) => item.id === folderId);
   if (!folder) return;
+  setSettingsFormDirty("folder", false);
   document.getElementById("folder-id").value = folder.id;
   document.getElementById("folder-name").value = folder.name;
   document.getElementById("folder-path").value = folder.path;
@@ -134,6 +149,7 @@ export function resetChannelForm() {
   document.getElementById("channel-form").reset();
   document.getElementById("channel-id").value = "";
   document.getElementById("channel-enabled").checked = true;
+  setSettingsFormDirty("channel", false);
 }
 
 export function resetFolderForm() {
@@ -143,4 +159,5 @@ export function resetFolderForm() {
   document.getElementById("folder-enabled").checked = true;
   document.getElementById("folder-interval").value = 30;
   document.getElementById("folder-action").value = "keep";
+  setSettingsFormDirty("folder", false);
 }

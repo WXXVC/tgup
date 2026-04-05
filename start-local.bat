@@ -1,121 +1,160 @@
 @echo off
-setlocal enabledelayedexpansion
-chcp 65001 >nul
+setlocal
 
 cd /d "%~dp0"
 title TG Upload Manager - Local Start
 
-echo.
-echo ========================================
-echo   TG Upload Manager 本地一键启动
-echo ========================================
-echo.
-
-set "PYTHON_CMD="
 set "APP_URL=http://127.0.0.1:8000"
+set "VENV_DIR=.venv"
 set "VENV_PYTHON=.venv\Scripts\python.exe"
+set "PYTHON_CMD="
+set "REBUILT_VENV="
+
+echo.
+echo ========================================
+echo   TG Upload Manager Local Starter
+echo ========================================
+echo.
 
 where py >nul 2>nul
-if %errorlevel%==0 (
+if not errorlevel 1 (
   set "PYTHON_CMD=py"
 ) else (
   where python >nul 2>nul
-  if %errorlevel%==0 (
+  if not errorlevel 1 (
     set "PYTHON_CMD=python"
   )
 )
 
 if not defined PYTHON_CMD (
-  echo [错误] 未检测到 Python。
-  echo 请先安装 Python 3.11+，并确保已加入 PATH。
-  echo.
+  echo [ERROR] Python was not found.
+  echo Please install Python 3.11+ and add it to PATH.
   goto :fail
 )
 
-if exist ".venv" if not exist "%VENV_PYTHON%" (
-  echo [提示] 检测到损坏的虚拟环境，正在重新创建...
-  rmdir /s /q ".venv"
+if exist "%VENV_DIR%" if not exist "%VENV_PYTHON%" (
+  echo [INFO] Broken virtual environment detected. Recreating...
+  rmdir /s /q "%VENV_DIR%"
 )
 
 if not exist "%VENV_PYTHON%" (
-  echo [1/5] 正在创建虚拟环境...
-  %PYTHON_CMD% -m venv .venv
-  if errorlevel 1 (
-    echo [错误] 虚拟环境创建失败。
-    echo.
-    echo 可能原因：Python 未完整安装，或系统缺少 venv 组件。
-    goto :fail
-  )
+  call :create_venv
+  if errorlevel 1 goto :fail
 ) else (
-  echo [1/5] 已检测到虚拟环境，跳过创建。
+  echo [1/5] Virtual environment already exists.
 )
 
-echo [2/5] 正在升级 pip...
-".venv\Scripts\python.exe" -m pip --version >nul 2>nul
+echo [2/5] Checking pip...
+"%VENV_PYTHON%" -m pip --version >nul 2>nul
 if errorlevel 1 (
-  echo [提示] 当前虚拟环境缺少 pip，正在尝试自动修复...
+  echo [INFO] pip is missing in the venv. Trying ensurepip...
   "%VENV_PYTHON%" -m ensurepip --upgrade
 )
 
 "%VENV_PYTHON%" -m pip --version >nul 2>nul
 if errorlevel 1 (
-  echo [错误] pip 修复失败。
-  echo.
-  echo 请检查 Python 安装是否包含 ensurepip / venv。
+  echo [ERROR] pip is still unavailable.
+  echo Please check your Python installation.
   goto :fail
 )
 
-"%VENV_PYTHON%" -m pip install --upgrade pip
+echo [3/5] Installing dependencies...
+"%VENV_PYTHON%" -m pip install --upgrade pip > "%TEMP%\tgup_pip_upgrade.log" 2>&1
 if errorlevel 1 (
-  echo [警告] pip 升级失败，将继续尝试安装项目依赖。
+  findstr /i /c:"no RECORD file was found for pip" "%TEMP%\tgup_pip_upgrade.log" >nul 2>nul
+  if not errorlevel 1 (
+    echo [WARN] Broken pip metadata detected. Rebuilding virtual environment...
+    call :rebuild_venv
+    if errorlevel 1 goto :fail
+  ) else (
+    echo [WARN] pip upgrade failed. Continuing anyway...
+  )
 )
 
-echo [3/5] 正在安装依赖...
-"%VENV_PYTHON%" -m pip install -r backend\requirements.txt
+"%VENV_PYTHON%" -m pip install -r backend\requirements.txt > "%TEMP%\tgup_requirements.log" 2>&1
 if errorlevel 1 (
-  echo [错误] 依赖安装失败。
-  echo.
-  echo 可能原因：
-  echo 1. 网络不可用或 PyPI 无法访问
-  echo 2. Python 版本过低
-  echo 3. 本机缺少编译环境或 SSL 证书异常
+  findstr /i /c:"no RECORD file was found for pip" "%TEMP%\tgup_requirements.log" >nul 2>nul
+  if not errorlevel 1 if not defined REBUILT_VENV (
+    echo [WARN] Broken pip metadata detected while installing dependencies.
+    echo [INFO] Rebuilding virtual environment and retrying once...
+    call :rebuild_venv
+    if errorlevel 1 goto :fail
+    "%VENV_PYTHON%" -m pip install -r backend\requirements.txt
+    if not errorlevel 1 goto :deps_ok
+  )
+  echo [ERROR] Failed to install dependencies.
+  echo Possible causes:
+  echo   - Network / PyPI access issue
+  echo   - Unsupported Python version
+  echo   - Local SSL or build environment issue
   goto :fail
 )
 
+:deps_ok
 if not exist "data" (
-  echo [4/5] 正在创建 data 目录...
+  echo [4/5] Creating data directory...
   mkdir data
   if errorlevel 1 (
-    echo [错误] data 目录创建失败。
+    echo [ERROR] Failed to create data directory.
     goto :fail
   )
 ) else (
-  echo [4/5] data 目录已存在。
+  echo [4/5] data directory already exists.
 )
 
-echo [5/5] 正在启动服务...
-echo.
-echo 启动后访问: %APP_URL%
-echo 按 Ctrl+C 可停止服务。
-echo.
-
+echo [5/5] Starting service...
 netstat -ano | findstr ":8000" >nul 2>nul
-if %errorlevel%==0 (
-  echo [提示] 检测到 8000 端口可能已被占用。
-  echo 如果启动失败，请先关闭占用该端口的程序后重试。
-  echo.
+if not errorlevel 1 (
+  echo [WARN] Port 8000 may already be in use.
+  echo If startup fails, stop the process using port 8000 and try again.
 )
+
+echo.
+echo App URL: %APP_URL%
+echo Press Ctrl+C to stop the server.
+echo.
 
 start "" %APP_URL%
 "%VENV_PYTHON%" -m uvicorn backend.app.main:app --reload
 
 echo.
-echo 服务已退出。
+echo Service stopped.
 pause
 exit /b 0
 
 :fail
 echo.
-echo 启动未完成，请根据上方提示处理后重试。
+echo Startup did not complete. See the messages above.
 pause
 exit /b 1
+
+:create_venv
+echo [1/5] Creating virtual environment...
+%PYTHON_CMD% -m venv "%VENV_DIR%"
+if errorlevel 1 (
+  echo [WARN] Built-in venv creation failed. Trying virtualenv fallback...
+  %PYTHON_CMD% -m pip install --upgrade virtualenv
+  if errorlevel 1 (
+    echo [ERROR] Failed to install virtualenv fallback.
+    echo Check your network connection and Python installation.
+    exit /b 1
+  )
+  %PYTHON_CMD% -m virtualenv "%VENV_DIR%"
+  if errorlevel 1 (
+    echo [ERROR] Failed to create virtual environment.
+    echo Check whether Python includes venv support or can install virtualenv.
+    exit /b 1
+  )
+)
+exit /b 0
+
+:rebuild_venv
+set "REBUILT_VENV=1"
+if exist "%VENV_DIR%" (
+  rmdir /s /q "%VENV_DIR%"
+)
+call :create_venv
+if errorlevel 1 exit /b 1
+"%VENV_PYTHON%" -m ensurepip --upgrade >nul 2>nul
+"%VENV_PYTHON%" -m pip install --upgrade pip >nul 2>nul
+exit /b 0
