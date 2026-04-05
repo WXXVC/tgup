@@ -1647,11 +1647,14 @@ dialog::backdrop {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .detail-subtask-head strong {
   flex: 1;
   min-width: 0;
+  max-width: 100%;
   font-size: 12px;
   line-height: 1.35;
 }
@@ -1756,7 +1759,7 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
-#task-detail-dialog {
+#task-detail-dialog[open] {
   display: flex;
   flex-direction: column;
 }

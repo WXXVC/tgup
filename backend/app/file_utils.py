@@ -7,6 +7,9 @@ from .models import UploadStatus
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+ALBUM_SAFE_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
+ALBUM_SAFE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+ALBUM_MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"}
 DOCUMENT_EXTENSIONS = {
     ".pdf",
@@ -35,6 +38,16 @@ def classify_file(path: Path) -> str:
     if extension in DOCUMENT_EXTENSIONS:
         return "document"
     return "other"
+
+
+def is_album_eligible(path: Path) -> bool:
+    extension = path.suffix.lower()
+    if extension not in ALBUM_SAFE_VIDEO_EXTENSIONS | ALBUM_SAFE_IMAGE_EXTENSIONS:
+        return False
+    try:
+        return path.stat().st_size < ALBUM_MAX_FILE_SIZE
+    except OSError:
+        return False
 
 
 def build_caption(root: Path, file_path: Path) -> str:

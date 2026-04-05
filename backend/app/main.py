@@ -285,7 +285,9 @@ async def uploads():
 
 @app.get("/api/uploads/stats")
 async def upload_stats():
-    return upload_repo.stats()
+    stats = upload_repo.stats()
+    stats.upload_speed_bytes = upload_manager.current_upload_speed_bytes
+    return stats
 
 
 @app.post("/api/uploads/{task_id}/retry")

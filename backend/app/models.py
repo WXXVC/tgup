@@ -150,3 +150,4 @@ class UploadStats(BaseModel):
     uploaded: int = 0
     failed: int = 0
     locked: int = 0
+    upload_speed_bytes: float = 0.0

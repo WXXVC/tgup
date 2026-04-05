@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from telethon.tl.types import Message
 
-from .file_utils import classify_file, file_is_locked
+from .file_utils import classify_file, file_is_locked, is_album_eligible
 from .models import FolderConfig, UploadBatchItem, UploadStatus, UploadTask
 from .scanner import FolderScanner
 from .settings_service import SettingsService
@@ -35,6 +35,8 @@ class UploadManager:
         self.active_upload_id: str | None = None
         self.pending_signatures: set[tuple[str, tuple[str, ...]]] = set()
         self.deleted_task_ids: set[str] = set()
+        self.current_upload_speed_bytes: float = 0.0
+        self._speed_samples: dict[str, tuple[int, float]] = {}
 
     async def start(self) -> None:
         if not self.worker_task:
@@ -198,6 +200,7 @@ class UploadManager:
             except asyncio.CancelledError:
                 pass
             finally:
+                self._clear_task_speed(task.id)
                 self.active_upload_task = None
                 self.active_upload_id = None
                 self.deleted_task_ids.discard(task.id)
@@ -304,6 +307,7 @@ class UploadManager:
 
     def _progress_callback(self, task_id: str, total_size: int):
         def callback(current: int, total: int) -> None:
+            self._record_upload_speed(task_id, current)
             denominator = total or total_size
             progress = round((current / max(1, denominator)) * 100, 2)
             task = self.upload_repo.get_task(task_id)
@@ -326,6 +330,7 @@ class UploadManager:
         def callback(current: int, total: int) -> None:
             current_total = total or file_size
             uploaded = sent_bytes + min(current, current_total)
+            self._record_upload_speed(task_id, uploaded)
             progress = round((uploaded / max(1, total_size)) * 100, 2)
             task = self.upload_repo.get_task(task_id)
             batch_paths = task.batch_paths if task else []
@@ -429,7 +434,7 @@ class UploadManager:
         batches: list[tuple[str, list[str]]] = []
         for key in ordered_keys:
             paths = groups[key]
-            media_paths = [path for path in paths if classify_file(root / path) in {"video", "image"}]
+            media_paths = [path for path in paths if is_album_eligible(root / path)]
             non_media_paths = [path for path in paths if path not in media_paths]
             if len(media_paths) > 1:
                 batches.append((media_paths[0], media_paths))
@@ -442,6 +447,25 @@ class UploadManager:
 
     def _task_signature(self, folder_id: str, batch_paths: list[str]) -> tuple[str, tuple[str, ...]]:
         return folder_id, tuple(sorted(batch_paths))
+
+    def _record_upload_speed(self, task_id: str, uploaded_bytes: int) -> None:
+        now = time.monotonic()
+        last_uploaded, last_time = self._speed_samples.get(task_id, (0, now))
+        self._speed_samples[task_id] = (uploaded_bytes, now)
+        delta_bytes = uploaded_bytes - last_uploaded
+        delta_time = now - last_time
+        if delta_bytes <= 0 or delta_time <= 0:
+            return
+        instantaneous = delta_bytes / delta_time
+        if self.current_upload_speed_bytes <= 0:
+            self.current_upload_speed_bytes = instantaneous
+            return
+        self.current_upload_speed_bytes = (self.current_upload_speed_bytes * 0.55) + (instantaneous * 0.45)
+
+    def _clear_task_speed(self, task_id: str) -> None:
+        self._speed_samples.pop(task_id, None)
+        if self.active_upload_id == task_id:
+            self.current_upload_speed_bytes = 0.0
 
     def _build_batch_items(
         self,

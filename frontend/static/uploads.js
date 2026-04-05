@@ -21,7 +21,24 @@ function emptyStats() {
     uploaded: 0,
     failed: 0,
     locked: 0,
+    upload_speed_bytes: 0,
   };
+}
+
+function formatUploadSpeed(bytesPerSecond = 0) {
+  const value = Number(bytesPerSecond) || 0;
+  if (value <= 0) {
+    return "0 KB/s";
+  }
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  const decimals = size >= 100 || index === 0 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(decimals)} ${units[index]}`;
 }
 
 export async function loadUploads() {
@@ -70,6 +87,10 @@ function renderUploadStats() {
     <article class="top-stat-card is-active">
       <strong>${stats.uploading}</strong>
       <span>上传中</span>
+    </article>
+    <article class="top-stat-card">
+      <strong>${formatUploadSpeed(stats.upload_speed_bytes)}</strong>
+      <span>总速度</span>
     </article>
     <article class="top-stat-card">
       <strong>${stats.pending}</strong>
@@ -303,11 +324,16 @@ export function renderUploads() {
 }
 
 export async function syncUploadProgress() {
-  const uploads = await api("/api/uploads");
+  const [uploads, stats] = await Promise.all([
+    api("/api/uploads"),
+    api("/api/uploads/stats"),
+  ]);
   state.uploads = uploads;
+  state.uploadStats = stats;
   state.selectedUploadTaskIds = new Set(
     [...state.selectedUploadTaskIds].filter((taskId) => uploads.some((item) => item.id === taskId)),
   );
+  renderUploadStats();
 
   const visibleTaskIds = new Set(
     paginatedUploads(filteredUploads()).items.map((task) => task.id),
