@@ -26,6 +26,14 @@ class UploadRepository:
             rows = connection.execute("SELECT id FROM uploads").fetchall()
         return {row["id"] for row in rows}
 
+    def list_recoverable_tasks(self) -> list[UploadTask]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM uploads WHERE status IN (?, ?) ORDER BY created_at ASC",
+                (UploadStatus.PENDING.value, UploadStatus.UPLOADING.value),
+            ).fetchall()
+        return [self._decode_task(row) for row in rows]
+
     def upsert_task(self, task: UploadTask) -> UploadTask:
         payload = task.model_dump()
         payload["batch_paths"] = json.dumps(payload["batch_paths"], ensure_ascii=True)

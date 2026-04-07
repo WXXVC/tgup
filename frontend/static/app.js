@@ -488,6 +488,19 @@ function wireEvents() {
     pushToast("登录请求已发送", "success");
   });
 
+  document.getElementById("save-api-settings").addEventListener("click", async () => {
+    const payload = {
+      api_id: document.getElementById("api-id").value.trim() ? Number(document.getElementById("api-id").value) : null,
+      api_hash: document.getElementById("api-hash").value.trim(),
+      phone_number: document.getElementById("phone-number").value.trim(),
+      upload_workers: Number(document.getElementById("upload-workers").value) || 1,
+    };
+    await submitJson("/api/settings/api", payload);
+    setSettingsFormDirty("api", false);
+    await loadSettings();
+    pushToast("登录配置已保存", "success");
+  });
+
   document.getElementById("code-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     await submitJson("/api/auth/code", { code: document.getElementById("code-input").value });

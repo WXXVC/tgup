@@ -43,6 +43,7 @@ class UploadManager:
 
     async def start(self) -> None:
         self.video_splitter.cleanup_orphans(self.upload_repo.list_task_ids())
+        await self._restore_recoverable_tasks()
         if not self.scan_task:
             self.scan_task = asyncio.create_task(self._scanner_loop())
         await self.apply_runtime_settings()
@@ -65,6 +66,27 @@ class UploadManager:
             self.worker_tasks = self.worker_tasks[:desired]
             for task in extra:
                 task.cancel()
+
+    async def _restore_recoverable_tasks(self) -> None:
+        for task in self.upload_repo.list_recoverable_tasks():
+            updated = self.upload_repo.update_task(
+                task.id,
+                status=UploadStatus.PENDING,
+                progress=0,
+                error_message="",
+                batch_items=self._build_batch_items(self._task_display_items(task), UploadStatus.PENDING, progress=0),
+                completed_count=0,
+            )
+            recover_task = updated or task
+            signature = self._task_signature(
+                recover_task.folder_id,
+                recover_task.batch_paths or [recover_task.relative_path],
+                recover_task.source_relative_path,
+            )
+            if signature in self.pending_signatures:
+                continue
+            self.pending_signatures.add(signature)
+            await self.queue.put(recover_task)
 
     async def enqueue_manual(self, folder_id: str, relative_paths: list[str]) -> None:
         folder = self._folder_map().get(folder_id)
