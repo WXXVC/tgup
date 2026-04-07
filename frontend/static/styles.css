@@ -537,6 +537,10 @@ select:focus-visible {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.folder-form-wide {
+  grid-column: 1 / -1;
+}
+
 label {
   display: grid;
   gap: 8px;

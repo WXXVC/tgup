@@ -16,6 +16,9 @@ def init_db() -> None:
                 channel_id TEXT NOT NULL,
                 relative_path TEXT NOT NULL,
                 absolute_path TEXT NOT NULL,
+                source_relative_path TEXT NOT NULL DEFAULT '',
+                source_absolute_path TEXT NOT NULL DEFAULT '',
+                task_kind TEXT NOT NULL DEFAULT 'single',
                 batch_paths TEXT NOT NULL DEFAULT '[]',
                 batch_items TEXT NOT NULL DEFAULT '[]',
                 completed_count INTEGER NOT NULL DEFAULT 0,
@@ -36,6 +39,18 @@ def init_db() -> None:
         if "batch_paths" not in columns:
             connection.execute(
                 "ALTER TABLE uploads ADD COLUMN batch_paths TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "source_relative_path" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN source_relative_path TEXT NOT NULL DEFAULT ''"
+            )
+        if "source_absolute_path" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN source_absolute_path TEXT NOT NULL DEFAULT ''"
+            )
+        if "task_kind" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'single'"
             )
         if "batch_items" not in columns:
             connection.execute(

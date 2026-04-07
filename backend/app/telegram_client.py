@@ -11,6 +11,12 @@ from telethon.errors import (
 )
 
 from .config import SESSIONS_DIR
+from .file_utils import (
+    classify_file,
+    guess_media_mime_type,
+    is_previewable_audio,
+    is_streamable_video,
+)
 from .models import LoginStage
 
 
@@ -102,13 +108,36 @@ class TelegramSessionManager:
     ):
         if not self.client:
             raise RuntimeError("telegram client is not initialized")
+        path_objects = [Path(path) for path in file_paths]
+        send_options = self._build_send_options(path_objects)
         return await self.client.send_file(
             entity=channel_target,
             file=file_paths if len(file_paths) > 1 else file_paths[0],
             caption=caption,
             progress_callback=progress_callback,
-            force_document=False,
+            **send_options,
         )
+
+    def _build_send_options(self, paths: list[Path]) -> dict:
+        options = {"force_document": False}
+        if not paths:
+            return options
+
+        if len(paths) > 1:
+            if all(classify_file(path) == "video" and is_streamable_video(path) for path in paths):
+                options["supports_streaming"] = True
+            return options
+
+        path = paths[0]
+        file_type = classify_file(path)
+        mime_type = guess_media_mime_type(path)
+        if mime_type:
+            options["mime_type"] = mime_type
+        if file_type == "video" and is_streamable_video(path):
+            options["supports_streaming"] = True
+        if file_type == "music" and is_previewable_audio(path):
+            options["supports_streaming"] = False
+        return options
 
     async def shutdown(self) -> None:
         if self.client:

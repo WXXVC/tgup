@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from collections import OrderedDict
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,19 +24,22 @@ class SettingsService:
         self._settings = self.store.save(self._settings)
         return self._settings
 
-    def update_api(self, api_id: int, api_hash: str, phone_number: str) -> AppSettings:
+    def update_api(self, api_id: int, api_hash: str, phone_number: str, upload_workers: int | None = None) -> AppSettings:
         self._settings.api.api_id = api_id
         self._settings.api.api_hash = api_hash
         self._settings.api.phone_number = phone_number
+        if upload_workers is not None:
+            self._settings.upload_workers = upload_workers
         return self.save()
 
-    def resolve_api_payload(self, payload: LoginStartRequest) -> tuple[int, str, str]:
+    def resolve_api_payload(self, payload: LoginStartRequest) -> tuple[int, str, str, int]:
         api_id = payload.api_id if payload.api_id is not None else self._settings.api.api_id
         api_hash = payload.api_hash.strip() or self._settings.api.api_hash
         phone_number = payload.phone_number.strip() or self._settings.api.phone_number
+        upload_workers = payload.upload_workers or self._settings.upload_workers
         if api_id is None or not api_hash or not phone_number:
             raise ValueError("api credentials are incomplete")
-        return api_id, api_hash, phone_number
+        return api_id, api_hash, phone_number, upload_workers
 
     def has_access_password(self) -> bool:
         return bool(self._settings.access_password_hash)
@@ -139,7 +143,7 @@ class SettingsService:
         return removed
 
     def add_folder(self, payload: FolderPayload) -> FolderConfig:
-        folder = FolderConfig(id=str(uuid4()), **payload.model_dump())
+        folder = FolderConfig(id=str(uuid4()), **self._normalize_folder_payload(payload))
         self._validate_folder(folder)
         self._settings.folders.append(folder)
         self.save()
@@ -148,7 +152,7 @@ class SettingsService:
     def update_folder(self, folder_id: str, payload: FolderPayload) -> FolderConfig | None:
         for index, folder in enumerate(self._settings.folders):
             if folder.id == folder_id:
-                updated = folder.model_copy(update=payload.model_dump())
+                updated = folder.model_copy(update=self._normalize_folder_payload(payload))
                 self._validate_folder(updated)
                 self._settings.folders[index] = updated
                 self.save()
@@ -175,3 +179,30 @@ class SettingsService:
                 Path(folder.move_target_path)
             except OSError as exc:
                 raise ValueError("move_target_path is invalid") from exc
+        if folder.segment_target_size_mb >= folder.upload_size_limit_mb:
+            raise ValueError("segment_target_size_mb must be smaller than upload_size_limit_mb")
+        root = Path(folder.path)
+        invalid_subdirs = []
+        normalized_subdirs = []
+        for item in folder.excluded_subdirs:
+            candidate = item.strip().replace("\\", "/").strip("/")
+            if not candidate:
+                continue
+            try:
+                (root / candidate).resolve().relative_to(root.resolve())
+            except ValueError:
+                invalid_subdirs.append(item)
+                continue
+            normalized_subdirs.append(candidate)
+        if invalid_subdirs:
+            raise ValueError("excluded_subdirs contains invalid paths")
+        folder.excluded_subdirs = list(OrderedDict.fromkeys(normalized_subdirs))
+
+    def _normalize_folder_payload(self, payload: FolderPayload) -> dict:
+        data = payload.model_dump()
+        data["excluded_subdirs"] = [
+            item.strip().replace("\\", "/").strip("/")
+            for item in payload.excluded_subdirs
+            if item and item.strip().replace("\\", "/").strip("/")
+        ]
+        return data

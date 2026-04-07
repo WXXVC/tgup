@@ -7,6 +7,9 @@ title TG Upload Manager - Local Start
 set "APP_URL=http://127.0.0.1:8000"
 set "VENV_DIR=.venv"
 set "VENV_PYTHON=.venv\Scripts\python.exe"
+set "TOOLS_DIR=%CD%\tools"
+set "FFMPEG_DIR=%TOOLS_DIR%\ffmpeg"
+set "FFMPEG_BIN_DIR=%FFMPEG_DIR%\bin"
 set "PYTHON_CMD="
 set "REBUILT_VENV="
 
@@ -58,7 +61,7 @@ if errorlevel 1 (
   goto :fail
 )
 
-echo [3/5] Installing dependencies...
+echo [3/6] Installing dependencies...
 "%VENV_PYTHON%" -m pip install --upgrade pip > "%TEMP%\tgup_pip_upgrade.log" 2>&1
 if errorlevel 1 (
   findstr /i /c:"no RECORD file was found for pip" "%TEMP%\tgup_pip_upgrade.log" >nul 2>nul
@@ -91,18 +94,38 @@ if errorlevel 1 (
 )
 
 :deps_ok
+echo [4/6] Checking ffmpeg / ffprobe...
+call :ensure_ffmpeg
+if errorlevel 1 goto :fail
+
+where ffmpeg >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] ffmpeg was not found in PATH.
+  echo This project requires ffmpeg and ffprobe for large video segment uploads.
+  echo Please install FFmpeg and ensure both ffmpeg.exe and ffprobe.exe are available in PATH.
+  goto :fail
+)
+
+where ffprobe >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] ffprobe was not found in PATH.
+  echo This project requires ffmpeg and ffprobe for large video segment uploads.
+  echo Please install FFmpeg and ensure both ffmpeg.exe and ffprobe.exe are available in PATH.
+  goto :fail
+)
+
 if not exist "data" (
-  echo [4/5] Creating data directory...
+  echo [5/6] Creating data directory...
   mkdir data
   if errorlevel 1 (
     echo [ERROR] Failed to create data directory.
     goto :fail
   )
 ) else (
-  echo [4/5] data directory already exists.
+  echo [5/6] data directory already exists.
 )
 
-echo [5/5] Starting service...
+echo [6/6] Starting service...
 netstat -ano | findstr ":8000" >nul 2>nul
 if not errorlevel 1 (
   echo [WARN] Port 8000 may already be in use.
@@ -129,7 +152,7 @@ pause
 exit /b 1
 
 :create_venv
-echo [1/5] Creating virtual environment...
+echo [1/6] Creating virtual environment...
 %PYTHON_CMD% -m venv "%VENV_DIR%"
 if errorlevel 1 (
   echo [WARN] Built-in venv creation failed. Trying virtualenv fallback...
@@ -157,4 +180,67 @@ call :create_venv
 if errorlevel 1 exit /b 1
 "%VENV_PYTHON%" -m ensurepip --upgrade >nul 2>nul
 "%VENV_PYTHON%" -m pip install --upgrade pip >nul 2>nul
+exit /b 0
+
+:ensure_ffmpeg
+if exist "%FFMPEG_BIN_DIR%\ffmpeg.exe" if exist "%FFMPEG_BIN_DIR%\ffprobe.exe" (
+  set "PATH=%FFMPEG_BIN_DIR%;%PATH%"
+  exit /b 0
+)
+
+where ffmpeg >nul 2>nul
+if not errorlevel 1 (
+  where ffprobe >nul 2>nul
+  if not errorlevel 1 exit /b 0
+)
+
+echo [INFO] ffmpeg / ffprobe not found. Downloading local FFmpeg package...
+if not exist "%TOOLS_DIR%" mkdir "%TOOLS_DIR%"
+
+set "FFMPEG_ZIP=%TEMP%\tgup_ffmpeg.zip"
+set "FFMPEG_EXTRACT=%TEMP%\tgup_ffmpeg_extract"
+if exist "%FFMPEG_ZIP%" del /f /q "%FFMPEG_ZIP%" >nul 2>nul
+if exist "%FFMPEG_EXTRACT%" rmdir /s /q "%FFMPEG_EXTRACT%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ProgressPreference='SilentlyContinue';" ^
+  "Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile '%FFMPEG_ZIP%'"
+if errorlevel 1 (
+  echo [ERROR] Failed to download FFmpeg automatically.
+  echo Please check your network connection, or install FFmpeg manually and add it to PATH.
+  exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ProgressPreference='SilentlyContinue';" ^
+  "Expand-Archive -LiteralPath '%FFMPEG_ZIP%' -DestinationPath '%FFMPEG_EXTRACT%' -Force"
+if errorlevel 1 (
+  echo [ERROR] Failed to extract FFmpeg package.
+  echo Please install FFmpeg manually and add it to PATH.
+  exit /b 1
+)
+
+for /d %%D in ("%FFMPEG_EXTRACT%\*") do (
+  if exist "%%~fD\bin\ffmpeg.exe" (
+    if exist "%FFMPEG_DIR%" rmdir /s /q "%FFMPEG_DIR%"
+    move "%%~fD" "%FFMPEG_DIR%" >nul
+    goto :ffmpeg_ready
+  )
+)
+
+echo [ERROR] FFmpeg package was downloaded, but the bin directory was not found.
+echo Please install FFmpeg manually and add it to PATH.
+exit /b 1
+
+:ffmpeg_ready
+set "PATH=%FFMPEG_BIN_DIR%;%PATH%"
+if not exist "%FFMPEG_BIN_DIR%\ffmpeg.exe" (
+  echo [ERROR] ffmpeg.exe is still missing after download.
+  exit /b 1
+)
+if not exist "%FFMPEG_BIN_DIR%\ffprobe.exe" (
+  echo [ERROR] ffprobe.exe is still missing after download.
+  exit /b 1
+)
+echo [INFO] Local FFmpeg is ready: %FFMPEG_BIN_DIR%
 exit /b 0

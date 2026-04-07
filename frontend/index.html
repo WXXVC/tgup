@@ -148,6 +148,10 @@
                   <span>手机号</span>
                   <input id="phone-number" name="phone_number">
                 </label>
+                <label>
+                  <span>上传并发数</span>
+                  <input id="upload-workers" name="upload_workers" type="number" min="1" max="4" value="1">
+                </label>
                 <div class="actions">
                   <button type="submit">开始登录</button>
                 </div>
@@ -225,6 +229,10 @@
                   <span>移动目标路径</span>
                   <input id="folder-move-target" placeholder="仅当处理策略为 move 时需要">
                 </label>
+                <label class="folder-form-wide">
+                  <span>排除子文件夹</span>
+                  <textarea id="folder-excluded-subdirs" rows="4" placeholder="仅影响自动扫描与立即扫描创建任务，一行一个相对子目录，如：&#10;Screens&#10;Screens/raw&#10;Samples"></textarea>
+                </label>
                 <label class="toggle switch-row">
                   <input id="folder-auto" type="checkbox" checked>
                   <span class="switch-copy">
@@ -238,6 +246,21 @@
                     <strong>媒体组上传</strong>
                     <small>启用后，多张图片或多个视频会按 Telegram 相册样式合并上传</small>
                   </span>
+                </label>
+                <label class="toggle switch-row">
+                  <input id="folder-split-large-video" type="checkbox">
+                  <span class="switch-copy">
+                    <strong>超限视频自动分段上传</strong>
+                    <small>仅对超过上传上限的单个视频生效，先尝试媒体组上传，失败后自动降级为逐个单发</small>
+                  </span>
+                </label>
+                <label>
+                  <span>上传上限(MB)</span>
+                  <input id="folder-upload-limit" type="number" min="100" max="4096" value="2048">
+                </label>
+                <label>
+                  <span>分段目标大小(MB)</span>
+                  <input id="folder-segment-target" type="number" min="100" max="4096" value="1900">
                 </label>
                 <label class="toggle switch-row">
                   <input id="folder-enabled" type="checkbox" checked>

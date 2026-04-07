@@ -1,6 +1,7 @@
 ﻿import { state } from "./store.js";
 import { api, debounce, pushToast, setGlobalBanner, setText } from "./utils.js";
 import {
+  closePreview,
   clearFileSelection,
   handlePreview,
   initPreviewSize,
@@ -11,6 +12,7 @@ import {
   setPreviewSize,
   selectVisibleFiles,
   stepPreview,
+  syncPreviewOnDialogClose,
   toggleDirectoryCollapse,
 } from "./files.js";
 import {
@@ -478,6 +480,7 @@ function wireEvents() {
       api_id: document.getElementById("api-id").value.trim() ? Number(document.getElementById("api-id").value) : null,
       api_hash: document.getElementById("api-hash").value.trim(),
       phone_number: document.getElementById("phone-number").value.trim(),
+      upload_workers: Number(document.getElementById("upload-workers").value) || 1,
     };
     await submitJson("/api/auth/start", payload);
     setSettingsFormDirty("api", false);
@@ -548,12 +551,19 @@ function wireEvents() {
       name: document.getElementById("folder-name").value,
       path: document.getElementById("folder-path").value,
       channel_id: document.getElementById("folder-channel").value,
-      auto_upload: document.getElementById("folder-auto").checked,
-      media_group_upload: document.getElementById("folder-media-group").checked,
-      scan_interval_seconds: Number(document.getElementById("folder-interval").value),
-      post_upload_action: document.getElementById("folder-action").value,
-      move_target_path: document.getElementById("folder-move-target").value,
-      enabled: document.getElementById("folder-enabled").checked,
+        excluded_subdirs: document.getElementById("folder-excluded-subdirs").value
+          .split(/\r?\n/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+        auto_upload: document.getElementById("folder-auto").checked,
+        media_group_upload: document.getElementById("folder-media-group").checked,
+        split_large_video_upload: document.getElementById("folder-split-large-video").checked,
+        upload_size_limit_mb: Number(document.getElementById("folder-upload-limit").value) || 2048,
+        segment_target_size_mb: Number(document.getElementById("folder-segment-target").value) || 1900,
+        scan_interval_seconds: Number(document.getElementById("folder-interval").value),
+        post_upload_action: document.getElementById("folder-action").value,
+        move_target_path: document.getElementById("folder-move-target").value,
+        enabled: document.getElementById("folder-enabled").checked,
     };
     const folderId = document.getElementById("folder-id").value;
     await submitJson(folderId ? `/api/folders/${folderId}` : "/api/folders", payload, folderId ? "PUT" : "POST");
@@ -794,7 +804,7 @@ function wireEvents() {
   });
 
   document.getElementById("preview-close").addEventListener("click", () => {
-    document.getElementById("preview-dialog").close();
+    closePreview();
   });
   document.getElementById("preview-prev").addEventListener("click", () => {
     stepPreview(-1);
@@ -824,6 +834,10 @@ function wireEvents() {
     renderAccessScreen();
     setText("access-login-error", "访问已失效，请重新输入密码");
     await loadAccessStatus().catch(() => {});
+  });
+
+  document.getElementById("preview-dialog").addEventListener("close", () => {
+    syncPreviewOnDialogClose();
   });
 }
 

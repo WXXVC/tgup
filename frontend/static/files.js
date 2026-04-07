@@ -466,6 +466,34 @@ export function stepPreview(offset) {
   handlePreview(candidates[nextIndex].relative_path);
 }
 
+function cleanupPreviewMedia() {
+  const body = document.getElementById("preview-body");
+  if (!body) return;
+  body.querySelectorAll("video, audio").forEach((media) => {
+    try {
+      media.pause();
+      media.removeAttribute("src");
+      media.load();
+    } catch {
+      // Ignore media cleanup failures and continue closing the dialog.
+    }
+  });
+  body.innerHTML = "";
+}
+
+export function closePreview() {
+  const dialog = document.getElementById("preview-dialog");
+  if (!dialog) return;
+  cleanupPreviewMedia();
+  if (dialog.open) {
+    dialog.close();
+  }
+}
+
+export function syncPreviewOnDialogClose() {
+  cleanupPreviewMedia();
+}
+
 export function selectSubdir(subdir) {
   state.currentSubdir = subdir;
   state.filePage = 1;

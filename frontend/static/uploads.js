@@ -171,6 +171,9 @@ function paginatedUploads(tasks) {
 
 function taskBatchSummary(task) {
   const batchCount = Array.isArray(task.batch_paths) ? task.batch_paths.length : 0;
+  if (task.task_kind === "split_video") {
+    return `视频分段任务 · 共 ${batchCount} 段`;
+  }
   if (batchCount > 1) {
     return `媒体组任务 · 共 ${batchCount} 个文件`;
   }
@@ -439,19 +442,21 @@ export function showTaskDetail(taskId) {
       `).join("")}</div>`
     : "<p>-</p>";
   const batchPaths = Array.isArray(task.batch_paths) && task.batch_paths.length
-    ? `<ul class="detail-path-list">${task.batch_paths.map((path) => `<li>${escapeHtml(path)}</li>`).join("")}</ul>`
+    ? `<ul class="detail-path-list">${(task.task_kind === "split_video" && Array.isArray(task.batch_items) && task.batch_items.length
+      ? task.batch_items.map((item) => item.relative_path)
+      : task.batch_paths).map((path) => `<li>${escapeHtml(path)}</li>`).join("")}</ul>`
     : "<p>-</p>";
   const totalCount = Array.isArray(task.batch_paths) && task.batch_paths.length ? task.batch_paths.length : 1;
   const completedCount = Math.min(task.completed_count || 0, totalCount);
   document.getElementById("task-detail-body").innerHTML = `
     <div class="detail-grid">
       <div><strong>状态</strong><p>${statusLabel(task.status)}</p></div>
-      <div><strong>相对路径</strong><p>${escapeHtml(task.relative_path)}</p></div>
-      <div><strong>上传模式</strong><p>${isBatchTask(task) ? "媒体组上传" : "单文件上传"}</p></div>
+      <div><strong>相对路径</strong><p>${escapeHtml(task.source_relative_path || task.relative_path)}</p></div>
+      <div><strong>上传模式</strong><p>${task.task_kind === "split_video" ? "视频分段上传" : isBatchTask(task) ? "媒体组上传" : "单文件上传"}</p></div>
       <div><strong>完成数</strong><p>${completedCount} / ${totalCount}</p></div>
       <div><strong>进度</strong><p>${(task.progress || 0).toFixed(2)}%</p></div>
       <div><strong>批量文件数</strong><p>${totalCount}</p></div>
-      <div><strong>绝对路径</strong><p>${escapeHtml(task.absolute_path)}</p></div>
+      <div><strong>绝对路径</strong><p>${escapeHtml(task.source_absolute_path || task.absolute_path)}</p></div>
       <div><strong>更新时间</strong><p>${formatDateTime(task.updated_at)}</p></div>
       <div><strong>创建时间</strong><p>${formatDateTime(task.created_at)}</p></div>
       <div><strong>任务 ID</strong><p>${escapeHtml(task.id)}</p></div>

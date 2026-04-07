@@ -180,16 +180,18 @@ async def clear_access_password():
 
 @app.post("/api/settings/api")
 async def save_api_settings(payload: LoginStartRequest):
-    api_id, api_hash, phone_number = settings_service.resolve_api_payload(payload)
-    settings_service.update_api(api_id, api_hash, phone_number)
+    api_id, api_hash, phone_number, upload_workers = settings_service.resolve_api_payload(payload)
+    settings_service.update_api(api_id, api_hash, phone_number, upload_workers)
+    await upload_manager.apply_runtime_settings()
     return {"ok": True}
 
 
 @app.post("/api/auth/start")
 async def auth_start(payload: LoginStartRequest):
-    api_id, api_hash, phone_number = settings_service.resolve_api_payload(payload)
+    api_id, api_hash, phone_number, upload_workers = settings_service.resolve_api_payload(payload)
     stage = await telegram.start_login(api_id, api_hash, phone_number)
-    settings_service.update_api(api_id, api_hash, phone_number)
+    settings_service.update_api(api_id, api_hash, phone_number, upload_workers)
+    await upload_manager.apply_runtime_settings()
     return {"stage": stage.value, "last_error": telegram.last_error}
 
 

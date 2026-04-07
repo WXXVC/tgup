@@ -21,6 +21,11 @@ class UploadRepository:
             row = connection.execute("SELECT * FROM uploads WHERE id = ?", (task_id,)).fetchone()
         return self._decode_task(row) if row else None
 
+    def list_task_ids(self) -> set[str]:
+        with get_connection() as connection:
+            rows = connection.execute("SELECT id FROM uploads").fetchall()
+        return {row["id"] for row in rows}
+
     def upsert_task(self, task: UploadTask) -> UploadTask:
         payload = task.model_dump()
         payload["batch_paths"] = json.dumps(payload["batch_paths"], ensure_ascii=True)
@@ -29,13 +34,16 @@ class UploadRepository:
             connection.execute(
                 """
                 INSERT INTO uploads (
-                    id, folder_id, channel_id, relative_path, absolute_path, batch_paths, batch_items, completed_count, status,
+                    id, folder_id, channel_id, relative_path, absolute_path, source_relative_path, source_absolute_path, task_kind, batch_paths, batch_items, completed_count, status,
                     progress, error_message, caption, created_at, updated_at
                 ) VALUES (
-                    :id, :folder_id, :channel_id, :relative_path, :absolute_path, :batch_paths, :batch_items, :completed_count, :status,
+                    :id, :folder_id, :channel_id, :relative_path, :absolute_path, :source_relative_path, :source_absolute_path, :task_kind, :batch_paths, :batch_items, :completed_count, :status,
                     :progress, :error_message, :caption, :created_at, :updated_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
+                    source_relative_path = excluded.source_relative_path,
+                    source_absolute_path = excluded.source_absolute_path,
+                    task_kind = excluded.task_kind,
                     batch_paths = excluded.batch_paths,
                     batch_items = excluded.batch_items,
                     completed_count = excluded.completed_count,

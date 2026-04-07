@@ -1,4 +1,5 @@
 from __future__ import annotations
+import mimetypes
 import re
 from pathlib import Path
 
@@ -9,6 +10,8 @@ VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
 ALBUM_SAFE_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v"}
 ALBUM_SAFE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+STREAMABLE_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
+PREVIEWABLE_AUDIO_EXTENSIONS = {".mp3", ".m4a", ".aac", ".ogg", ".flac", ".wav"}
 ALBUM_MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"}
 DOCUMENT_EXTENSIONS = {
@@ -40,14 +43,35 @@ def classify_file(path: Path) -> str:
     return "other"
 
 
-def is_album_eligible(path: Path) -> bool:
+def is_album_eligible(path: Path, max_file_size_bytes: int = ALBUM_MAX_FILE_SIZE) -> bool:
     extension = path.suffix.lower()
     if extension not in ALBUM_SAFE_VIDEO_EXTENSIONS | ALBUM_SAFE_IMAGE_EXTENSIONS:
         return False
     try:
-        return path.stat().st_size < ALBUM_MAX_FILE_SIZE
+        return path.stat().st_size < max_file_size_bytes
     except OSError:
         return False
+
+
+def is_streamable_video(path: Path) -> bool:
+    return path.suffix.lower() in STREAMABLE_VIDEO_EXTENSIONS
+
+
+def is_previewable_audio(path: Path) -> bool:
+    return path.suffix.lower() in PREVIEWABLE_AUDIO_EXTENSIONS
+
+
+def guess_media_mime_type(path: Path) -> str | None:
+    mime_type, _ = mimetypes.guess_type(path.name)
+    if mime_type:
+        return mime_type
+    if is_streamable_video(path):
+        return "video/mp4"
+    if path.suffix.lower() == ".m4a":
+        return "audio/mp4"
+    if path.suffix.lower() == ".flac":
+        return "audio/flac"
+    return None
 
 
 def build_caption(root: Path, file_path: Path) -> str:

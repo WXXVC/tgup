@@ -53,9 +53,11 @@ export function renderSettings() {
     const apiIdInput = document.getElementById("api-id");
     const apiHashInput = document.getElementById("api-hash");
     const phoneInput = document.getElementById("phone-number");
+    const uploadWorkersInput = document.getElementById("upload-workers");
     apiIdInput.value = "";
     apiHashInput.value = "";
     phoneInput.value = "";
+    uploadWorkersInput.value = String(settings.upload_workers || 1);
     apiIdInput.placeholder = settings.api.api_id || "未填写则沿用已保存的 API ID";
     apiHashInput.placeholder = settings.api.api_hash || "未填写则沿用已保存的 API Hash";
     phoneInput.placeholder = settings.api.phone_number || "未填写则沿用已保存的手机号";
@@ -113,6 +115,8 @@ export function renderSettings() {
           <span>频道: ${escapeHtml(channel ? channel.name : "未找到")}</span>
           <span>自动上传: ${folder.auto_upload ? "开" : "关"}</span>
           <span>媒体组上传: ${folder.media_group_upload ? "开" : "关"}</span>
+          <span>超限分段: ${folder.split_large_video_upload ? "开" : "关"}</span>
+          <span>排除目录: ${folder.excluded_subdirs?.length ? `${folder.excluded_subdirs.length} 个` : "无"}</span>
           <span>扫描: ${folder.scan_interval_seconds}s</span>
           <span>处理: ${escapeHtml(folder.post_upload_action)}</span>
         </div>
@@ -149,8 +153,12 @@ export function fillFolderForm(folderId) {
   document.getElementById("folder-interval").value = folder.scan_interval_seconds;
   document.getElementById("folder-action").value = folder.post_upload_action;
   document.getElementById("folder-move-target").value = folder.move_target_path || "";
+  document.getElementById("folder-excluded-subdirs").value = (folder.excluded_subdirs || []).join("\n");
   document.getElementById("folder-auto").checked = folder.auto_upload;
   document.getElementById("folder-media-group").checked = !!folder.media_group_upload;
+  document.getElementById("folder-split-large-video").checked = !!folder.split_large_video_upload;
+  document.getElementById("folder-upload-limit").value = folder.upload_size_limit_mb || 2048;
+  document.getElementById("folder-segment-target").value = folder.segment_target_size_mb || 1900;
   document.getElementById("folder-enabled").checked = folder.enabled;
 }
 
@@ -166,8 +174,12 @@ export function resetFolderForm() {
   document.getElementById("folder-id").value = "";
   document.getElementById("folder-auto").checked = true;
   document.getElementById("folder-media-group").checked = false;
+  document.getElementById("folder-split-large-video").checked = false;
   document.getElementById("folder-enabled").checked = true;
   document.getElementById("folder-interval").value = 30;
+  document.getElementById("folder-upload-limit").value = 2048;
+  document.getElementById("folder-segment-target").value = 1900;
   document.getElementById("folder-action").value = "keep";
+  document.getElementById("folder-excluded-subdirs").value = "";
   setSettingsFormDirty("folder", false);
 }
