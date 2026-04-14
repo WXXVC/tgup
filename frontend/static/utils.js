@@ -135,6 +135,23 @@ export function formatDateTime(timestamp) {
   return new Date(timestamp * 1000).toLocaleString();
 }
 
+export function translateUploadError(message = "") {
+  const normalized = String(message || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.startsWith("file is locked: ")) {
+    return `文件被占用：${normalized.slice("file is locked: ".length)}`;
+  }
+  if (normalized.startsWith("file is still changing: ")) {
+    return `文件仍在写入，等待稳定：${normalized.slice("file is still changing: ".length)}`;
+  }
+  if (normalized === "missing folder, channel, or file") {
+    return "目录、频道或文件不存在";
+  }
+  return normalized;
+}
+
 export function initOverflowMarquee(root = document) {
   const nodes = root.querySelectorAll("[data-marquee]");
   nodes.forEach((node) => {

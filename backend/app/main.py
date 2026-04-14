@@ -262,7 +262,7 @@ async def folder_files(folder_id: str):
     folder = next((item for item in settings_service.settings.folders if item.id == folder_id), None)
     if not folder:
         raise HTTPException(status_code=404, detail="folder not found")
-    return scanner.list_files(folder.id, folder.path)
+    return scanner.list_files(folder.id, folder.path, folder.min_stable_seconds)
 
 
 @app.post("/api/folders/{folder_id}/scan")

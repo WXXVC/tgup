@@ -181,7 +181,12 @@ class UploadManager:
     async def _scan_folder(self, folder: FolderConfig) -> None:
         pending_paths = [
             item.relative_path
-            for item in self.scanner.list_scannable_files(folder.id, folder.path, folder.excluded_subdirs)
+            for item in self.scanner.list_scannable_files(
+                folder.id,
+                folder.path,
+                folder.min_stable_seconds,
+                folder.excluded_subdirs,
+            )
             if item.status == UploadStatus.PENDING
         ]
         for lead_path, batch_paths in self._build_upload_batches(folder, pending_paths, group_by_parent=True):
@@ -285,13 +290,27 @@ class UploadManager:
                     batch_items=self._build_batch_items(self._task_display_items(task), UploadStatus.FAILED, "missing folder, channel, or file", 0),
                 )
                 return
-            locked_path = next((path for path in paths if file_is_locked(path)), None)
-            if locked_path:
+            unavailable_path = next(
+                (
+                    path
+                    for path in paths
+                    if self.scanner.is_file_unavailable(task.folder_id, folder.path, path, folder.min_stable_seconds)
+                ),
+                None,
+            )
+            if unavailable_path:
+                reason = (
+                    f"文件被占用：{unavailable_path.name}"
+                    if file_is_locked(unavailable_path)
+                    else f"文件仍在写入，等待稳定：{unavailable_path.name}"
+                )
                 self.upload_repo.update_task(
                     task.id,
                     status=UploadStatus.LOCKED,
-                    error_message=f"file is locked: {locked_path.name}",
-                    batch_items=self._build_batch_items(self._task_display_items(task), UploadStatus.LOCKED, f"file is locked: {locked_path.name}", 0),
+                    progress=0,
+                    completed_count=0,
+                    error_message=reason,
+                    batch_items=self._build_batch_items(self._task_display_items(task), UploadStatus.LOCKED, reason, 0),
                 )
                 return
             self.upload_repo.update_task(

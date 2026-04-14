@@ -10,6 +10,7 @@ import {
   setPanelFeedback,
   statusLabel,
   taskSkeleton,
+  translateUploadError,
 } from "./utils.js";
 import { submitJson } from "./settings.js";
 
@@ -136,7 +137,7 @@ function filteredUploads() {
       }
       if (state.taskSearch) {
         const query = state.taskSearch.toLowerCase();
-        const haystack = `${task.relative_path} ${task.caption || ""} ${task.error_message || ""}`.toLowerCase();
+        const haystack = `${task.relative_path} ${task.caption || ""} ${translateUploadError(task.error_message || "")}`.toLowerCase();
         if (!haystack.includes(query)) {
           return false;
         }
@@ -314,7 +315,7 @@ export function renderUploads() {
         <div class="meta upload-task-meta upload-task-meta-strong">
           <span data-progress-text="${task.id}">${taskCompletionText(task)}</span>
           <span>模式: ${isBatchTask(task) ? "媒体组上传" : "单文件上传"}</span>
-          ${task.error_message ? `<span class="danger">${escapeHtml(task.error_message)}</span>` : ""}
+          ${task.error_message ? `<span class="danger">${escapeHtml(translateUploadError(task.error_message))}</span>` : ""}
         </div>
         <div class="item-actions">
           <button data-action="task-detail" data-id="${task.id}" class="ghost" type="button">详情</button>
@@ -437,7 +438,7 @@ export function showTaskDetail(taskId) {
             <div class="progress"><span style="width:${item.progress || 0}%"></span></div>
             <span>${(item.progress || 0).toFixed(2)}%</span>
           </div>
-          ${item.error_message ? `<p class="danger">${escapeHtml(item.error_message)}</p>` : ""}
+          ${item.error_message ? `<p class="danger">${escapeHtml(translateUploadError(item.error_message))}</p>` : ""}
         </article>
       `).join("")}</div>`
     : "<p>-</p>";
@@ -472,7 +473,7 @@ export function showTaskDetail(taskId) {
       </details>
       <details class="detail-block detail-panel" ${task.error_message ? "open" : ""}>
         <summary>错误信息</summary>
-        <div class="detail-panel-body"><p>${escapeHtml(task.error_message || "-")}</p></div>
+        <div class="detail-panel-body"><p>${escapeHtml(translateUploadError(task.error_message) || "-")}</p></div>
       </details>
       <details class="detail-block detail-panel">
         <summary>批量路径</summary>

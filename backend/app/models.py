@@ -53,6 +53,7 @@ class FolderConfig(BaseModel):
     upload_size_limit_mb: int = Field(default=2048, ge=100, le=4096)
     segment_target_size_mb: int = Field(default=1900, ge=100, le=4096)
     scan_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    min_stable_seconds: int = Field(default=30, ge=0, le=3600)
     post_upload_action: PostUploadAction = PostUploadAction.KEEP
     move_target_path: str = ""
     enabled: bool = True
@@ -102,6 +103,7 @@ class FolderPayload(BaseModel):
     upload_size_limit_mb: int = Field(default=2048, ge=100, le=4096)
     segment_target_size_mb: int = Field(default=1900, ge=100, le=4096)
     scan_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    min_stable_seconds: int = Field(default=30, ge=0, le=3600)
     post_upload_action: PostUploadAction = PostUploadAction.KEEP
     move_target_path: str = ""
     enabled: bool = True

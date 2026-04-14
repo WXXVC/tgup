@@ -118,6 +118,7 @@ export function renderSettings() {
           <span>超限分段: ${folder.split_large_video_upload ? "开" : "关"}</span>
           <span>排除目录: ${folder.excluded_subdirs?.length ? `${folder.excluded_subdirs.length} 个` : "无"}</span>
           <span>扫描: ${folder.scan_interval_seconds}s</span>
+          <span>稳定: ${folder.min_stable_seconds ?? 30}s</span>
           <span>处理: ${escapeHtml(folder.post_upload_action)}</span>
         </div>
         <div class="item-actions">
@@ -151,6 +152,7 @@ export function fillFolderForm(folderId) {
   document.getElementById("folder-path").value = folder.path;
   document.getElementById("folder-channel").value = folder.channel_id;
   document.getElementById("folder-interval").value = folder.scan_interval_seconds;
+  document.getElementById("folder-min-stable-seconds").value = folder.min_stable_seconds ?? 30;
   document.getElementById("folder-action").value = folder.post_upload_action;
   document.getElementById("folder-move-target").value = folder.move_target_path || "";
   document.getElementById("folder-excluded-subdirs").value = (folder.excluded_subdirs || []).join("\n");
@@ -177,6 +179,7 @@ export function resetFolderForm() {
   document.getElementById("folder-split-large-video").checked = false;
   document.getElementById("folder-enabled").checked = true;
   document.getElementById("folder-interval").value = 30;
+  document.getElementById("folder-min-stable-seconds").value = 30;
   document.getElementById("folder-upload-limit").value = 2048;
   document.getElementById("folder-segment-target").value = 1900;
   document.getElementById("folder-action").value = "keep";

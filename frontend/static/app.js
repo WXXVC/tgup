@@ -574,6 +574,7 @@ function wireEvents() {
         upload_size_limit_mb: Number(document.getElementById("folder-upload-limit").value) || 2048,
         segment_target_size_mb: Number(document.getElementById("folder-segment-target").value) || 1900,
         scan_interval_seconds: Number(document.getElementById("folder-interval").value),
+        min_stable_seconds: Number(document.getElementById("folder-min-stable-seconds").value) || 0,
         post_upload_action: document.getElementById("folder-action").value,
         move_target_path: document.getElementById("folder-move-target").value,
         enabled: document.getElementById("folder-enabled").checked,

@@ -219,6 +219,10 @@
                   <input id="folder-interval" type="number" min="5" max="3600" value="30" required>
                 </label>
                 <label>
+                  <span>最小稳定时间(秒)</span>
+                  <input id="folder-min-stable-seconds" type="number" min="0" max="3600" value="30" required>
+                </label>
+                <label>
                   <span>上传后处理</span>
                   <select id="folder-action">
                     <option value="keep">保留原文件</option>
@@ -238,7 +242,7 @@
                   <input id="folder-auto" type="checkbox" checked>
                   <span class="switch-copy">
                     <strong>自动上传</strong>
-                    <small>扫描到新文件后自动创建上传任务</small>
+                    <small>扫描到新文件后，只有稳定达到设定秒数才会自动创建上传任务</small>
                   </span>
                 </label>
                 <label class="toggle switch-row">
