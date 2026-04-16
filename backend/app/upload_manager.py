@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
+import re
 import shutil
 import time
 from pathlib import Path
@@ -19,6 +21,14 @@ from .video_splitter import VideoSplitter
 
 
 class UploadManager:
+    SIMILARITY_RECHECK_SECONDS = 5
+    TELEGRAM_MEDIA_GROUP_LIMIT = 10
+    SIMILARITY_NOISE_PATTERNS = (
+        r"\b(?:\d{3,4}p|4k|8k|x26[45]|h\.?26[45]|hevc|avc|hdr|sdr|uhd|web[-_. ]?dl|blu[-_. ]?ray|bdrip|webrip|dvdrip)\b",
+        r"\b(?:aac|flac|mp3|ddp\d?(?:\.\d)?|dts|truehd|atmos)\b",
+        r"\b(?:sample|trailer|preview|cover|thumb|poster)\b",
+    )
+
     def __init__(
         self,
         settings_service: SettingsService,
@@ -95,8 +105,8 @@ class UploadManager:
         normalized = self._normalize_relative_paths(folder, relative_paths)
         if not normalized:
             raise ValueError("no files selected")
-        for lead_path, batch_paths in self._build_upload_batches(folder, normalized, group_by_parent=False):
-            await self._enqueue_task(folder, lead_path, batch_paths, force=True)
+        for lead_path, batch_paths, group_debug in self._build_upload_batches(folder, normalized, group_by_parent=False):
+            await self._enqueue_task(folder, lead_path, batch_paths, group_debug=group_debug, force=True)
 
     async def trigger_scan(self, folder_id: str | None = None) -> None:
         folders = self.settings_service.settings.folders
@@ -179,24 +189,19 @@ class UploadManager:
             await asyncio.sleep(max(5, sleep_for - elapsed))
 
     async def _scan_folder(self, folder: FolderConfig) -> None:
-        pending_paths = [
-            item.relative_path
-            for item in self.scanner.list_scannable_files(
-                folder.id,
-                folder.path,
-                folder.min_stable_seconds,
-                folder.excluded_subdirs,
-            )
-            if item.status == UploadStatus.PENDING
-        ]
-        for lead_path, batch_paths in self._build_upload_batches(folder, pending_paths, group_by_parent=True):
-            await self._enqueue_task(folder, lead_path, batch_paths)
+        pending_paths = self._list_pending_paths(folder)
+        if self._should_recheck_similarity_batches(folder, pending_paths):
+            await asyncio.sleep(self.SIMILARITY_RECHECK_SECONDS)
+            pending_paths = self._list_pending_paths(folder)
+        for lead_path, batch_paths, group_debug in self._build_upload_batches(folder, pending_paths, group_by_parent=True):
+            await self._enqueue_task(folder, lead_path, batch_paths, group_debug=group_debug)
 
     async def _enqueue_task(
         self,
         folder: FolderConfig,
         relative_path: str,
         batch_paths: list[str],
+        group_debug: str = "",
         force: bool = False,
     ) -> None:
         root = Path(folder.path)
@@ -247,6 +252,7 @@ class UploadManager:
             progress=0,
             error_message="",
             caption=self.scanner.build_caption(folder.path, str(absolute_path)),
+            group_debug=group_debug,
             created_at=time.time(),
             updated_at=time.time(),
         )
@@ -537,38 +543,204 @@ class UploadManager:
         relative_paths: list[str],
         *,
         group_by_parent: bool,
-    ) -> list[tuple[str, list[str]]]:
+    ) -> list[tuple[str, list[str], str]]:
         if not relative_paths:
             return []
 
         if not folder.media_group_upload:
-            return [(relative_path, [relative_path]) for relative_path in relative_paths]
+            return [
+                (
+                    relative_path,
+                    [relative_path],
+                    self._build_group_debug(folder, [relative_path], group_by_parent, "media-group disabled; single upload", 1, 1),
+                )
+                for relative_path in relative_paths
+            ]
 
         root = Path(folder.path)
+        batches: list[tuple[str, list[str], str]] = []
+        album_limit_bytes = min(ALBUM_MAX_FILE_SIZE, folder.upload_size_limit_mb * 1024 * 1024)
+        for paths in self._group_relative_paths(relative_paths, group_by_parent).values():
+            media_paths = [path for path in paths if is_album_eligible(root / path, album_limit_bytes)]
+            non_media_paths = [path for path in paths if path not in media_paths]
+            if folder.media_group_filename_similarity:
+                similar_groups = self._cluster_similar_media_paths(
+                    media_paths,
+                    folder.media_group_similarity_threshold,
+                )
+                for similar_paths in similar_groups:
+                    batches.extend(
+                        self._build_media_batches(
+                            folder,
+                            similar_paths,
+                            group_by_parent=group_by_parent,
+                            base_reason=f"same parent + filename similarity >= {folder.media_group_similarity_threshold}%",
+                        )
+                    )
+            elif len(media_paths) > 1:
+                batches.extend(
+                    self._build_media_batches(
+                        folder,
+                        media_paths,
+                        group_by_parent=group_by_parent,
+                        base_reason="same parent + eligible media grouped directly",
+                    )
+                )
+            else:
+                for path in media_paths:
+                    batches.append(
+                        (
+                            path,
+                            [path],
+                            self._build_group_debug(folder, [path], group_by_parent, "eligible media count < 2; single upload", 1, 1),
+                        )
+                    )
+            for path in non_media_paths:
+                batches.append(
+                    (
+                        path,
+                        [path],
+                        self._build_group_debug(folder, [path], group_by_parent, "file type or size not eligible for media-group", 1, 1),
+                    )
+                )
+        return batches
+
+    def _group_relative_paths(self, relative_paths: list[str], group_by_parent: bool) -> dict[str, list[str]]:
         groups: dict[str, list[str]] = {}
-        ordered_keys: list[str] = []
         for relative_path in relative_paths:
             parent = str(Path(relative_path).parent).replace("\\", "/")
             key = parent if group_by_parent else "__manual__"
-            if key not in groups:
-                groups[key] = []
-                ordered_keys.append(key)
-            groups[key].append(relative_path)
+            groups.setdefault(key, []).append(relative_path)
+        return groups
 
-        batches: list[tuple[str, list[str]]] = []
-        album_limit_bytes = min(ALBUM_MAX_FILE_SIZE, folder.upload_size_limit_mb * 1024 * 1024)
-        for key in ordered_keys:
-            paths = groups[key]
-            media_paths = [path for path in paths if is_album_eligible(root / path, album_limit_bytes)]
-            non_media_paths = [path for path in paths if path not in media_paths]
-            if len(media_paths) > 1:
-                batches.append((media_paths[0], media_paths))
-            else:
-                for path in media_paths:
-                    batches.append((path, [path]))
-            for path in non_media_paths:
-                batches.append((path, [path]))
+    def _cluster_similar_media_paths(self, relative_paths: list[str], threshold: int) -> list[list[str]]:
+        if not relative_paths:
+            return []
+
+        names = [self._similarity_name(path) for path in relative_paths]
+        clusters: list[list[str]] = []
+        remaining = list(range(len(relative_paths)))
+
+        while remaining:
+            seed = remaining.pop(0)
+            component = [seed]
+            stayed: list[int] = []
+            for candidate in remaining:
+                if self._filename_similarity_percent(names[seed], names[candidate]) >= threshold:
+                    component.append(candidate)
+                else:
+                    stayed.append(candidate)
+            remaining = stayed
+            clusters.append([relative_paths[item] for item in component])
+        return clusters
+
+    def _build_media_batches(
+        self,
+        folder: FolderConfig,
+        relative_paths: list[str],
+        *,
+        group_by_parent: bool,
+        base_reason: str,
+    ) -> list[tuple[str, list[str], str]]:
+        if not relative_paths:
+            return []
+        batches: list[tuple[str, list[str], str]] = []
+        total_chunks = max(1, (len(relative_paths) + self.TELEGRAM_MEDIA_GROUP_LIMIT - 1) // self.TELEGRAM_MEDIA_GROUP_LIMIT)
+        for index in range(0, len(relative_paths), self.TELEGRAM_MEDIA_GROUP_LIMIT):
+            chunk = relative_paths[index:index + self.TELEGRAM_MEDIA_GROUP_LIMIT]
+            chunk_number = (index // self.TELEGRAM_MEDIA_GROUP_LIMIT) + 1
+            batches.append(
+                (
+                    chunk[0],
+                    chunk,
+                    self._build_group_debug(folder, chunk, group_by_parent, base_reason, chunk_number, total_chunks),
+                )
+            )
         return batches
+
+    def _build_group_debug(
+        self,
+        folder: FolderConfig,
+        relative_paths: list[str],
+        group_by_parent: bool,
+        base_reason: str,
+        chunk_number: int,
+        total_chunks: int,
+    ) -> str:
+        parent = str(Path(relative_paths[0]).parent).replace("\\", "/") if relative_paths else ""
+        scope = f"parent: {parent or '(root)'}" if group_by_parent else "scope: manual selection"
+        similarity = (
+            f"filename similarity: on ({folder.media_group_similarity_threshold}%)"
+            if folder.media_group_filename_similarity
+            else "filename similarity: off"
+        )
+        chunk_info = (
+            f"chunk: {chunk_number}/{total_chunks}, max {self.TELEGRAM_MEDIA_GROUP_LIMIT} per media-group"
+            if total_chunks > 1
+            else f"chunk: not split, current group size {len(relative_paths)}"
+        )
+        return " | ".join([base_reason, scope, similarity, chunk_info])
+
+    def _similarity_name(self, relative_path: str) -> str:
+        stem = Path(relative_path).stem.casefold()
+        stem = re.sub(r"[\[\(\{].*?[\]\)\}]", " ", stem, flags=re.UNICODE)
+        for pattern in self.SIMILARITY_NOISE_PATTERNS:
+            stem = re.sub(pattern, " ", stem, flags=re.IGNORECASE | re.UNICODE)
+        stem = re.sub(r"(?:^|\s)(?:s\d{1,2}e\d{1,3}|e\d{1,3}|ep\d{1,3}|vol(?:ume)?\s*\d+|part\s*\d+|cd\s*\d+|disc\s*\d+|page\s*\d+|p\s*\d+)(?:\s|$)", " ", stem, flags=re.IGNORECASE | re.UNICODE)
+        stem = re.sub(r"[\W_]+", " ", stem, flags=re.UNICODE)
+        tokens = [token for token in stem.split() if token]
+        significant_tokens = [token for token in tokens if not token.isdigit()]
+        base_tokens = significant_tokens or tokens
+        return " ".join(base_tokens).strip()
+
+    def _filename_similarity_percent(self, left: str, right: str) -> float:
+        if not left or not right:
+            return 0.0
+        if left == right:
+            return 100.0
+        left_compact = left.replace(" ", "")
+        right_compact = right.replace(" ", "")
+        char_ratio = difflib.SequenceMatcher(None, left_compact, right_compact).ratio()
+        left_tokens = set(left.split())
+        right_tokens = set(right.split())
+        token_ratio = 0.0
+        if left_tokens and right_tokens:
+            token_ratio = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+        prefix_ratio = difflib.SequenceMatcher(None, left[: min(len(left), 24)], right[: min(len(right), 24)]).ratio()
+        score = max(char_ratio, (char_ratio * 0.55) + (token_ratio * 0.3) + (prefix_ratio * 0.15))
+        return score * 100
+
+    def _list_pending_paths(self, folder: FolderConfig) -> list[str]:
+        return [
+            item.relative_path
+            for item in self.scanner.list_scannable_files(
+                folder.id,
+                folder.path,
+                folder.min_stable_seconds,
+                folder.excluded_subdirs,
+            )
+            if item.status == UploadStatus.PENDING
+        ]
+
+    def _should_recheck_similarity_batches(self, folder: FolderConfig, relative_paths: list[str]) -> bool:
+        if not folder.media_group_upload or not folder.media_group_filename_similarity:
+            return False
+        if len(relative_paths) < 2:
+            return False
+
+        root = Path(folder.path)
+        album_limit_bytes = min(ALBUM_MAX_FILE_SIZE, folder.upload_size_limit_mb * 1024 * 1024)
+        for paths in self._group_relative_paths(relative_paths, group_by_parent=True).values():
+            media_paths = [path for path in paths if is_album_eligible(root / path, album_limit_bytes)]
+            if len(media_paths) < 2:
+                continue
+            similar_groups = self._cluster_similar_media_paths(
+                media_paths,
+                folder.media_group_similarity_threshold,
+            )
+            if any(len(group) > 1 for group in similar_groups):
+                return True
+        return False
 
     def _task_signature(self, folder_id: str, batch_paths: list[str], source_relative_path: str = "") -> tuple[str, tuple[str, ...]]:
         return folder_id, tuple([source_relative_path]) if source_relative_path else tuple(sorted(batch_paths))

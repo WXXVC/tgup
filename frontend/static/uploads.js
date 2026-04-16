@@ -458,6 +458,7 @@ export function showTaskDetail(taskId) {
       <div><strong>进度</strong><p>${(task.progress || 0).toFixed(2)}%</p></div>
       <div><strong>批量文件数</strong><p>${totalCount}</p></div>
       <div><strong>绝对路径</strong><p>${escapeHtml(task.source_absolute_path || task.absolute_path)}</p></div>
+      <div><strong>成组说明</strong><p>${escapeHtml(task.group_debug || "-")}</p></div>
       <div><strong>更新时间</strong><p>${formatDateTime(task.updated_at)}</p></div>
       <div><strong>创建时间</strong><p>${formatDateTime(task.created_at)}</p></div>
       <div><strong>任务 ID</strong><p>${escapeHtml(task.id)}</p></div>

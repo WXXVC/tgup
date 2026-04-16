@@ -249,8 +249,19 @@
                   <input id="folder-media-group" type="checkbox">
                   <span class="switch-copy">
                     <strong>媒体组上传</strong>
-                    <small>启用后，多张图片或多个视频会按 Telegram 相册样式合并上传</small>
+                    <small>启用后，多张图片或多个视频会按 Telegram 相册样式合并上传；单个媒体组超过 10 个文件时会自动拆分</small>
                   </span>
+                </label>
+                <label class="toggle switch-row">
+                  <input id="folder-media-group-similarity" type="checkbox">
+                  <span class="switch-copy">
+                    <strong>按文件名相似度成组</strong>
+                    <small>开启后，只有去掉扩展名后的文件名相似度达到阈值时才会走媒体组上传；自动扫描命中相似文件时会额外等待 5 秒再复检，且每组最多 10 个文件</small>
+                  </span>
+                </label>
+                <label>
+                  <span>媒体组相似度阈值(%)</span>
+                  <input id="folder-media-group-threshold" type="number" min="1" max="100" value="80">
                 </label>
                 <label class="toggle switch-row">
                   <input id="folder-split-large-video" type="checkbox">

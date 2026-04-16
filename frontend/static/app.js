@@ -23,6 +23,7 @@ import {
   resetFolderForm,
   setSettingsFormDirty,
   submitJson,
+  syncFolderMediaGroupControls,
 } from "./settings.js";
 import {
   clearTaskSelection,
@@ -404,6 +405,7 @@ function wireEvents() {
   initBrowserSidebarToggle();
   initFileColumnControl();
   initTaskColumnControl();
+  syncFolderMediaGroupControls();
   initPreviewSize();
 
   const debouncedFileSearch = debounce((value) => {
@@ -570,6 +572,8 @@ function wireEvents() {
           .filter(Boolean),
         auto_upload: document.getElementById("folder-auto").checked,
         media_group_upload: document.getElementById("folder-media-group").checked,
+        media_group_filename_similarity: document.getElementById("folder-media-group-similarity").checked,
+        media_group_similarity_threshold: Number(document.getElementById("folder-media-group-threshold").value) || 80,
         split_large_video_upload: document.getElementById("folder-split-large-video").checked,
         upload_size_limit_mb: Number(document.getElementById("folder-upload-limit").value) || 2048,
         segment_target_size_mb: Number(document.getElementById("folder-segment-target").value) || 1900,
@@ -594,6 +598,8 @@ function wireEvents() {
   document.getElementById("channel-form").addEventListener("change", () => setSettingsFormDirty("channel", true));
   document.getElementById("folder-form").addEventListener("input", () => setSettingsFormDirty("folder", true));
   document.getElementById("folder-form").addEventListener("change", () => setSettingsFormDirty("folder", true));
+  document.getElementById("folder-media-group").addEventListener("change", syncFolderMediaGroupControls);
+  document.getElementById("folder-media-group-similarity").addEventListener("change", syncFolderMediaGroupControls);
   document.getElementById("access-password-form").addEventListener("input", () => setSettingsFormDirty("access", true));
 
   document.getElementById("browser-folder").addEventListener("change", async (event) => {

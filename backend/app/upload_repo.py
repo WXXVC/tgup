@@ -43,10 +43,10 @@ class UploadRepository:
                 """
                 INSERT INTO uploads (
                     id, folder_id, channel_id, relative_path, absolute_path, source_relative_path, source_absolute_path, task_kind, batch_paths, batch_items, completed_count, status,
-                    progress, error_message, caption, created_at, updated_at
+                    progress, error_message, caption, group_debug, created_at, updated_at
                 ) VALUES (
                     :id, :folder_id, :channel_id, :relative_path, :absolute_path, :source_relative_path, :source_absolute_path, :task_kind, :batch_paths, :batch_items, :completed_count, :status,
-                    :progress, :error_message, :caption, :created_at, :updated_at
+                    :progress, :error_message, :caption, :group_debug, :created_at, :updated_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     source_relative_path = excluded.source_relative_path,
@@ -59,6 +59,7 @@ class UploadRepository:
                     progress = excluded.progress,
                     error_message = excluded.error_message,
                     caption = excluded.caption,
+                    group_debug = excluded.group_debug,
                     updated_at = excluded.updated_at
                 """,
                 payload,

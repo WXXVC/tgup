@@ -49,6 +49,8 @@ class FolderConfig(BaseModel):
     excluded_subdirs: list[str] = Field(default_factory=list)
     auto_upload: bool = True
     media_group_upload: bool = False
+    media_group_filename_similarity: bool = False
+    media_group_similarity_threshold: int = Field(default=80, ge=1, le=100)
     split_large_video_upload: bool = False
     upload_size_limit_mb: int = Field(default=2048, ge=100, le=4096)
     segment_target_size_mb: int = Field(default=1900, ge=100, le=4096)
@@ -99,6 +101,8 @@ class FolderPayload(BaseModel):
     excluded_subdirs: list[str] = Field(default_factory=list)
     auto_upload: bool = True
     media_group_upload: bool = False
+    media_group_filename_similarity: bool = False
+    media_group_similarity_threshold: int = Field(default=80, ge=1, le=100)
     split_large_video_upload: bool = False
     upload_size_limit_mb: int = Field(default=2048, ge=100, le=4096)
     segment_target_size_mb: int = Field(default=1900, ge=100, le=4096)
@@ -141,6 +145,7 @@ class UploadTask(BaseModel):
     progress: float = 0.0
     error_message: str = ""
     caption: str = ""
+    group_debug: str = ""
     created_at: float
     updated_at: float
 

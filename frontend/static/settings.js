@@ -12,6 +12,20 @@ export async function submitJson(url, payload, method = "POST") {
   return api(url, { method, body: JSON.stringify(payload) });
 }
 
+export function syncFolderMediaGroupControls() {
+  const mediaGroupEnabled = !!document.getElementById("folder-media-group")?.checked;
+  const similarityEnabled = mediaGroupEnabled && !!document.getElementById("folder-media-group-similarity")?.checked;
+  const similarityToggle = document.getElementById("folder-media-group-similarity");
+  const thresholdInput = document.getElementById("folder-media-group-threshold");
+
+  if (similarityToggle) {
+    similarityToggle.disabled = !mediaGroupEnabled;
+  }
+  if (thresholdInput) {
+    thresholdInput.disabled = !similarityEnabled;
+  }
+}
+
 export function setSettingsFormDirty(formName, dirty = true) {
   if (Object.hasOwn(state.ui.dirtyForms, formName)) {
     state.ui.dirtyForms[formName] = dirty;
@@ -115,6 +129,7 @@ export function renderSettings() {
           <span>频道: ${escapeHtml(channel ? channel.name : "未找到")}</span>
           <span>自动上传: ${folder.auto_upload ? "开" : "关"}</span>
           <span>媒体组上传: ${folder.media_group_upload ? "开" : "关"}</span>
+          <span>相似度成组: ${folder.media_group_filename_similarity ? `开 (${folder.media_group_similarity_threshold || 80}%)` : "关"}</span>
           <span>超限分段: ${folder.split_large_video_upload ? "开" : "关"}</span>
           <span>排除目录: ${folder.excluded_subdirs?.length ? `${folder.excluded_subdirs.length} 个` : "无"}</span>
           <span>扫描: ${folder.scan_interval_seconds}s</span>
@@ -158,10 +173,13 @@ export function fillFolderForm(folderId) {
   document.getElementById("folder-excluded-subdirs").value = (folder.excluded_subdirs || []).join("\n");
   document.getElementById("folder-auto").checked = folder.auto_upload;
   document.getElementById("folder-media-group").checked = !!folder.media_group_upload;
+  document.getElementById("folder-media-group-similarity").checked = !!folder.media_group_filename_similarity;
+  document.getElementById("folder-media-group-threshold").value = folder.media_group_similarity_threshold || 80;
   document.getElementById("folder-split-large-video").checked = !!folder.split_large_video_upload;
   document.getElementById("folder-upload-limit").value = folder.upload_size_limit_mb || 2048;
   document.getElementById("folder-segment-target").value = folder.segment_target_size_mb || 1900;
   document.getElementById("folder-enabled").checked = folder.enabled;
+  syncFolderMediaGroupControls();
 }
 
 export function resetChannelForm() {
@@ -176,6 +194,8 @@ export function resetFolderForm() {
   document.getElementById("folder-id").value = "";
   document.getElementById("folder-auto").checked = true;
   document.getElementById("folder-media-group").checked = false;
+  document.getElementById("folder-media-group-similarity").checked = false;
+  document.getElementById("folder-media-group-threshold").value = 80;
   document.getElementById("folder-split-large-video").checked = false;
   document.getElementById("folder-enabled").checked = true;
   document.getElementById("folder-interval").value = 30;
@@ -184,5 +204,6 @@ export function resetFolderForm() {
   document.getElementById("folder-segment-target").value = 1900;
   document.getElementById("folder-action").value = "keep";
   document.getElementById("folder-excluded-subdirs").value = "";
+  syncFolderMediaGroupControls();
   setSettingsFormDirty("folder", false);
 }

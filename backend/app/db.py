@@ -26,6 +26,7 @@ def init_db() -> None:
                 progress REAL NOT NULL,
                 error_message TEXT NOT NULL,
                 caption TEXT NOT NULL,
+                group_debug TEXT NOT NULL DEFAULT '',
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
                 message_id INTEGER
@@ -59,6 +60,10 @@ def init_db() -> None:
         if "completed_count" not in columns:
             connection.execute(
                 "ALTER TABLE uploads ADD COLUMN completed_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "group_debug" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN group_debug TEXT NOT NULL DEFAULT ''"
             )
         connection.execute(
             """
