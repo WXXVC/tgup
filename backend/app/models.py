@@ -235,7 +235,6 @@ class FileListPagination(BaseModel):
 
 class FileListResponse(BaseModel):
     items: list[FileEntry] = Field(default_factory=list)
-    tree: list[FileTreeNode] = Field(default_factory=list)
     stats: FileListStats = Field(default_factory=FileListStats)
     pagination: FileListPagination = Field(default_factory=FileListPagination)
     total_all: int = 0

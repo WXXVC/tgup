@@ -374,7 +374,7 @@ async function setActiveTab(tab, options = {}) {
   }
   if (tab === "settings" && state.settings) {
     renderSettingsTabs();
-    renderSettings();
+    await loadSettings(true);
     return;
   }
   if (tab === "uploads") {
@@ -648,10 +648,10 @@ function wireEvents() {
     if (state.access.enabled && !state.access.authorized) {
       return;
     }
-    if (state.activeTab === "uploads") {
-      await loadUploads();
-      return;
-    }
+  if (state.activeTab === "uploads") {
+    await Promise.all([loadUploads(), loadUploadStats()]);
+    return;
+  }
     if (state.activeTab === "files" && state.selectedFolderId) {
       await loadFiles(state.selectedFolderId, false);
     }

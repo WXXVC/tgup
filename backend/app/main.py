@@ -6,6 +6,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import asyncio
+import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +56,11 @@ upload_manager = UploadManager(
 )
 ACCESS_COOKIE_NAME = "tgup_access"
 APP_DISPLAY_VERSION = "0.1.0"
+SETTINGS_SUMMARY_CACHE_SECONDS = 1.5
+_settings_summary_cache: dict[str, object] = {
+    "cached_at": 0.0,
+    "payload": None,
+}
 
 
 def configure_logging() -> None:
@@ -151,6 +157,11 @@ def frontend_asset_version() -> str:
     return str(latest_mtime_ns)
 
 
+def invalidate_settings_summary_cache() -> None:
+    _settings_summary_cache["cached_at"] = 0.0
+    _settings_summary_cache["payload"] = None
+
+
 def is_public_path(path: str) -> bool:
     return path.startswith("/static/") or path in {
         "/",
@@ -203,6 +214,22 @@ async def get_settings():
         "settings": payload,
         "login": upload_manager.current_engine_status(),
     }
+
+
+@app.get("/api/settings/summary")
+async def get_settings_summary():
+    now = time.time()
+    cached_at = float(_settings_summary_cache.get("cached_at") or 0.0)
+    cached_payload = _settings_summary_cache.get("payload")
+    if cached_payload and (now - cached_at) <= SETTINGS_SUMMARY_CACHE_SECONDS:
+        return cached_payload
+    payload = {
+        "settings": settings_service.public_settings_summary(),
+        "login": upload_manager.current_engine_status(),
+    }
+    _settings_summary_cache["cached_at"] = now
+    _settings_summary_cache["payload"] = payload
+    return payload
 
 
 def build_bot_api_settings_payload() -> dict:
@@ -266,6 +293,7 @@ async def access_login(payload: AccessPasswordRequest):
 async def save_access_password(payload: AccessPasswordRequest):
     try:
         settings_service.set_access_password(payload.password)
+        invalidate_settings_summary_cache()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     response = JSONResponse({"ok": True})
@@ -282,6 +310,7 @@ async def save_access_password(payload: AccessPasswordRequest):
 @app.delete("/api/access/password")
 async def clear_access_password():
     settings_service.clear_access_password()
+    invalidate_settings_summary_cache()
     response = JSONResponse({"ok": True})
     response.delete_cookie(ACCESS_COOKIE_NAME, path="/")
     return response
@@ -291,6 +320,7 @@ async def clear_access_password():
 async def save_api_settings(payload: LoginStartRequest):
     api_id, api_hash, phone_number = settings_service.resolve_api_payload(payload)
     settings_service.update_api(api_id, api_hash, phone_number)
+    invalidate_settings_summary_cache()
     await upload_manager.apply_runtime_settings()
     return {"ok": True}
 
@@ -299,6 +329,7 @@ async def save_api_settings(payload: LoginStartRequest):
 async def save_proxy_settings(payload: ProxySettingsPayload):
     try:
         settings_service.update_proxy(payload)
+        invalidate_settings_summary_cache()
         if settings_service.settings.api.api_id and settings_service.settings.api.api_hash:
             await telegram.restore(
                 settings_service.settings.api.api_id,
@@ -319,6 +350,7 @@ async def save_proxy_settings(payload: ProxySettingsPayload):
 async def save_upload_engine(payload: UploadEnginePayload):
     try:
         settings_service.update_upload_engine(payload)
+        invalidate_settings_summary_cache()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "mode": "hybrid"}
@@ -333,6 +365,7 @@ async def list_bot_api_accounts():
 async def create_bot_api_account(payload: BotApiAccountPayload):
     try:
         account = settings_service.add_bot_api_account(payload)
+        invalidate_settings_summary_cache()
         bot_api_pool.configure(
             settings_service.resolved_bot_api_accounts(),
             settings_service.resolved_proxy_settings().model_dump(mode="json"),
@@ -352,6 +385,7 @@ async def update_bot_api_account(account_id: str, payload: BotApiAccountPayload)
         account = settings_service.update_bot_api_account(account_id, payload)
         if not account:
             raise HTTPException(status_code=404, detail="bot api account not found")
+        invalidate_settings_summary_cache()
         bot_api_pool.configure(
             settings_service.resolved_bot_api_accounts(),
             settings_service.resolved_proxy_settings().model_dump(mode="json"),
@@ -371,6 +405,7 @@ async def update_bot_api_account(account_id: str, payload: BotApiAccountPayload)
 async def delete_bot_api_account(account_id: str):
     try:
         deleted = settings_service.delete_bot_api_account(account_id)
+        invalidate_settings_summary_cache()
         bot_api_pool.configure(
             settings_service.resolved_bot_api_accounts(),
             settings_service.resolved_proxy_settings().model_dump(mode="json"),
@@ -400,6 +435,7 @@ async def test_bot_api_account(account_id: str):
 async def save_bot_dispatch_settings(payload: BotDispatchSettingsPayload):
     try:
         settings_service.update_bot_dispatch_settings(payload)
+        invalidate_settings_summary_cache()
         await upload_manager.apply_runtime_settings()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -409,6 +445,7 @@ async def save_bot_dispatch_settings(payload: BotDispatchSettingsPayload):
 @app.post("/api/settings/folders/normalize-limits")
 async def normalize_folder_limits_for_engine():
     result = settings_service.normalize_folder_limits_for_current_engine()
+    invalidate_settings_summary_cache()
     return {"ok": True, **result}
 
 
@@ -422,6 +459,7 @@ async def auth_start(payload: LoginStartRequest):
         settings_service.resolved_proxy_settings().model_dump(mode="json"),
     )
     settings_service.update_api(api_id, api_hash, phone_number)
+    invalidate_settings_summary_cache()
     await upload_manager.apply_runtime_settings()
     return {"stage": stage.value, "last_error": telegram.last_error}
 
@@ -440,7 +478,9 @@ async def auth_password(payload: LoginPasswordRequest):
 
 @app.post("/api/channels")
 async def create_channel(payload: ChannelPayload):
-    return settings_service.add_channel(payload)
+    channel = settings_service.add_channel(payload)
+    invalidate_settings_summary_cache()
+    return channel
 
 
 @app.put("/api/channels/{channel_id}")
@@ -448,6 +488,7 @@ async def update_channel(channel_id: str, payload: ChannelPayload):
     channel = settings_service.update_channel(channel_id, payload)
     if not channel:
         raise HTTPException(status_code=404, detail="channel not found")
+    invalidate_settings_summary_cache()
     return channel
 
 
@@ -600,13 +641,16 @@ async def delete_channel(channel_id: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="channel not found")
+    invalidate_settings_summary_cache()
     return {"ok": True}
 
 
 @app.post("/api/folders")
 async def create_folder(payload: FolderPayload):
     try:
-        return settings_service.add_folder(payload)
+        folder = settings_service.add_folder(payload)
+        invalidate_settings_summary_cache()
+        return folder
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -619,6 +663,7 @@ async def update_folder(folder_id: str, payload: FolderPayload):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not folder:
         raise HTTPException(status_code=404, detail="folder not found")
+    invalidate_settings_summary_cache()
     return folder
 
 
@@ -626,6 +671,7 @@ async def update_folder(folder_id: str, payload: FolderPayload):
 async def delete_folder(folder_id: str):
     if not settings_service.delete_folder(folder_id):
         raise HTTPException(status_code=404, detail="folder not found")
+    invalidate_settings_summary_cache()
     return {"ok": True}
 
 
@@ -661,10 +707,9 @@ async def folder_files(
         page_size=page_size,
     )
     list_done_at = asyncio.get_event_loop().time()
-    tree = scanner.build_directory_tree_for_view(folder.path, subdir)
     tree_done_at = asyncio.get_event_loop().time()
     logger.info(
-        "folder_files folder_id=%s subdir=%s scope=%s page=%s page_size=%s locate_ms=%.1f list_ms=%.1f tree_ms=%.1f total_ms=%.1f items=%s total_all=%s tree_nodes=%s",
+        "folder_files folder_id=%s subdir=%s scope=%s page=%s page_size=%s locate_ms=%.1f list_ms=%.1f total_ms=%.1f items=%s total_all=%s",
         folder_id,
         subdir,
         scope,
@@ -672,19 +717,43 @@ async def folder_files(
         page_size,
         (locate_done_at - request_started_at) * 1000,
         (list_done_at - locate_done_at) * 1000,
-        (tree_done_at - list_done_at) * 1000,
         (tree_done_at - request_started_at) * 1000,
         len(items),
         total_all,
-        len(tree),
     )
     return FileListResponse(
         items=items,
-        tree=tree,
         stats=stats,
         pagination=pagination,
         total_all=total_all,
     )
+
+
+@app.get("/api/folders/{folder_id}/tree")
+async def folder_tree(
+    folder_id: str,
+    subdir: str = Query(default=""),
+):
+    request_started_at = asyncio.get_event_loop().time()
+    folder = next(
+        (item for item in settings_service.settings.folders if item.id == folder_id),
+        None,
+    )
+    if not folder:
+        raise HTTPException(status_code=404, detail="folder not found")
+    locate_done_at = asyncio.get_event_loop().time()
+    tree = scanner.build_directory_tree_for_view(folder.path, subdir)
+    tree_done_at = asyncio.get_event_loop().time()
+    logger.info(
+        "folder_tree folder_id=%s subdir=%s locate_ms=%.1f tree_ms=%.1f total_ms=%.1f tree_nodes=%s",
+        folder_id,
+        subdir,
+        (locate_done_at - request_started_at) * 1000,
+        (tree_done_at - locate_done_at) * 1000,
+        (tree_done_at - request_started_at) * 1000,
+        len(tree),
+    )
+    return {"items": tree}
 
 
 @app.post("/api/folders/{folder_id}/scan")

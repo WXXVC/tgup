@@ -125,6 +125,20 @@ class SettingsService:
         payload["access_password_enabled"] = self.has_access_password()
         return payload
 
+    def public_settings_summary(self) -> dict:
+        return {
+            "folders": [
+                {
+                    "id": folder.id,
+                    "name": folder.name,
+                    "path": folder.path,
+                    "enabled": folder.enabled,
+                }
+                for folder in self._settings.folders
+            ],
+            "access_password_enabled": self.has_access_password(),
+        }
+
     def engine_limits(self) -> dict:
         return {
             "engine": "hybrid",

@@ -26,8 +26,22 @@ class UploadListCacheEntry:
     tasks: list[UploadTask]
 
 
+@dataclass
+class UploadStatsCacheEntry:
+    cached_at: float
+    stats: UploadStats
+
+
+@dataclass
+class UploadPageCacheEntry:
+    cached_at: float
+    response: UploadListResponse
+
+
 class UploadRepository:
     TASK_LIST_CACHE_SECONDS = 1.0
+    UPLOAD_STATS_CACHE_SECONDS = 1.0
+    UPLOAD_PAGE_CACHE_SECONDS = 1.0
     ACTIVE_TASK_STATUSES = {
         UploadStatus.PENDING.value,
         UploadStatus.UPLOADING.value,
@@ -37,6 +51,8 @@ class UploadRepository:
 
     def __init__(self) -> None:
         self._task_list_cache: UploadListCacheEntry | None = None
+        self._stats_cache: UploadStatsCacheEntry | None = None
+        self._page_cache: dict[tuple[int, int, str, str, str, str, str, str], UploadPageCacheEntry] = {}
 
     def list_tasks(self) -> list[UploadTask]:
         now = time.time()
@@ -55,6 +71,10 @@ class UploadRepository:
             cached_at=now,
             tasks=[item.model_copy() for item in tasks],
         )
+        self._stats_cache = UploadStatsCacheEntry(
+            cached_at=now,
+            stats=self._build_stats_from_tasks(tasks),
+        )
         return [item.model_copy() for item in tasks]
 
     def list_tasks_paginated(
@@ -69,6 +89,35 @@ class UploadRepository:
         search: str = "",
         sort: str = "updated_desc",
     ) -> UploadListResponse:
+        cache_key = (
+            max(1, int(page or 1)),
+            page_size if page_size in {10, 20, 50, 100} else 10,
+            folder_id,
+            status,
+            error_category,
+            scheduling,
+            search.strip(),
+            sort,
+        )
+        now = time.time()
+        cached_page = self._page_cache.get(cache_key)
+        if cached_page and (now - cached_page.cached_at) <= self.UPLOAD_PAGE_CACHE_SECONDS:
+            return cached_page.response.model_copy()
+        if error_category == "all" and scheduling == "all":
+            sql_result = self._list_tasks_paginated_sql(
+                page=page,
+                page_size=page_size,
+                folder_id=folder_id,
+                status=status,
+                search=search,
+                sort=sort,
+            )
+            if sql_result is not None:
+                self._page_cache[cache_key] = UploadPageCacheEntry(
+                    cached_at=now,
+                    response=sql_result.model_copy(),
+                )
+                return sql_result
         tasks = self.list_tasks()
         total_all = len(tasks)
         filtered = self._filter_tasks(
@@ -86,7 +135,7 @@ class UploadRepository:
         page = min(max(1, page), total_pages)
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
-        return UploadListResponse(
+        response = UploadListResponse(
             items=filtered[start_index:end_index],
             pagination=UploadListPagination(
                 page=page,
@@ -95,6 +144,76 @@ class UploadRepository:
                 total_items=total_items,
                 start=(start_index + 1) if total_items else 0,
                 end=min(end_index, total_items),
+            ),
+            total_all=total_all,
+        )
+        self._page_cache[cache_key] = UploadPageCacheEntry(
+            cached_at=now,
+            response=response.model_copy(),
+        )
+        return response
+
+    def _list_tasks_paginated_sql(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        folder_id: str,
+        status: str,
+        search: str,
+        sort: str,
+    ) -> UploadListResponse | None:
+        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page = max(1, page)
+        conditions = []
+        params: list[Any] = []
+        if folder_id != "all":
+            conditions.append("folder_id = ?")
+            params.append(folder_id)
+        if status != "all":
+            conditions.append("status = ?")
+            params.append(status)
+        normalized_search = search.strip().lower()
+        if normalized_search:
+            conditions.append(
+                "(LOWER(relative_path) LIKE ? OR LOWER(caption) LIKE ? OR LOWER(error_message) LIKE ?)"
+            )
+            like = f"%{normalized_search}%"
+            params.extend([like, like, like])
+        where_sql = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        order_sql = {
+            "created_desc": "created_at DESC, updated_at DESC",
+            "progress_desc": "progress DESC, updated_at DESC",
+            "name_asc": "relative_path COLLATE NOCASE ASC, updated_at DESC",
+            "updated_desc": "updated_at DESC, created_at DESC",
+        }.get(sort, "updated_at DESC, created_at DESC")
+        try:
+            with get_connection() as connection:
+                total_all = connection.execute(
+                    "SELECT COUNT(*) FROM uploads"
+                ).fetchone()[0]
+                total_items = connection.execute(
+                    f"SELECT COUNT(*) FROM uploads {where_sql}",
+                    tuple(params),
+                ).fetchone()[0]
+                total_pages = max(1, (total_items + page_size - 1) // page_size)
+                page = min(max(1, page), total_pages)
+                offset = (page - 1) * page_size
+                rows = connection.execute(
+                    f"SELECT * FROM uploads {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+                    tuple([*params, page_size, offset]),
+                ).fetchall()
+        except sqlite3.Error:
+            return None
+        return UploadListResponse(
+            items=[self._decode_task(row) for row in rows],
+            pagination=UploadListPagination(
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                total_items=total_items,
+                start=(offset + 1) if total_items else 0,
+                end=min(offset + page_size, total_items),
             ),
             total_all=total_all,
         )
@@ -150,7 +269,7 @@ class UploadRepository:
                 payload,
             )
             connection.commit()
-        self.invalidate_task_list_cache()
+        self._upsert_task_in_cache(task)
         return task
 
     def _decode_task(self, row) -> UploadTask:
@@ -174,7 +293,7 @@ class UploadRepository:
             cursor = connection.execute("DELETE FROM uploads WHERE id = ?", (task_id,))
             connection.commit()
         if cursor.rowcount:
-            self.invalidate_task_list_cache()
+            self._remove_task_from_cache(task_id)
         return cursor.rowcount > 0
 
     def delete_tasks(self, task_ids: list[str]) -> int:
@@ -188,7 +307,7 @@ class UploadRepository:
             )
             connection.commit()
         if cursor.rowcount:
-            self.invalidate_task_list_cache()
+            self._remove_tasks_from_cache(set(task_ids))
         return cursor.rowcount
 
     def clear_tasks(self, statuses: list[UploadStatus] | None = None) -> int:
@@ -203,15 +322,33 @@ class UploadRepository:
                 cursor = connection.execute("DELETE FROM uploads")
             connection.commit()
         if cursor.rowcount:
-            self.invalidate_task_list_cache()
+            if statuses:
+                self._remove_tasks_by_status({item.value for item in statuses})
+            else:
+                self.invalidate_task_list_cache()
         return cursor.rowcount
 
     def stats(self) -> UploadStats:
+        now = time.time()
+        cached = self._stats_cache
+        if cached and (now - cached.cached_at) <= self.UPLOAD_STATS_CACHE_SECONDS:
+            return cached.stats.model_copy()
+        task_cache = self._task_list_cache
+        if task_cache:
+            stats = self._build_stats_from_tasks(task_cache.tasks)
+            self._stats_cache = UploadStatsCacheEntry(
+                cached_at=now,
+                stats=stats.model_copy(),
+            )
+            return stats
         stats = UploadStats()
-        with get_connection() as connection:
-            rows = connection.execute(
-                "SELECT status, COUNT(*) AS count FROM uploads GROUP BY status"
-            ).fetchall()
+        try:
+            with get_connection() as connection:
+                rows = connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM uploads GROUP BY status"
+                ).fetchall()
+        except sqlite3.Error:
+            return stats
         total = 0
         for row in rows:
             status = row["status"]
@@ -220,6 +357,10 @@ class UploadRepository:
             if hasattr(stats, status):
                 setattr(stats, status, count)
         stats.total = total
+        self._stats_cache = UploadStatsCacheEntry(
+            cached_at=now,
+            stats=stats.model_copy(),
+        )
         return stats
 
     def is_uploaded(self, folder_id: str, relative_path: str, size: int, modified_at: float) -> bool:
@@ -264,6 +405,89 @@ class UploadRepository:
 
     def invalidate_task_list_cache(self) -> None:
         self._task_list_cache = None
+        self._stats_cache = None
+        self._page_cache.clear()
+
+    def _build_stats_from_tasks(self, tasks: list[UploadTask]) -> UploadStats:
+        stats = UploadStats(total=len(tasks))
+        for task in tasks:
+            status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            if hasattr(stats, status):
+                setattr(stats, status, getattr(stats, status) + 1)
+        return stats
+
+    def _refresh_stats_cache_from_task_cache(self) -> None:
+        if not self._task_list_cache:
+            self._stats_cache = None
+            self._page_cache.clear()
+            return
+        self._stats_cache = UploadStatsCacheEntry(
+            cached_at=time.time(),
+            stats=self._build_stats_from_tasks(self._task_list_cache.tasks),
+        )
+
+    def _sort_cached_tasks(self) -> None:
+        if not self._task_list_cache:
+            return
+        self._task_list_cache.tasks.sort(
+            key=lambda item: (-(item.updated_at or 0), -(item.created_at or 0))
+        )
+        self._task_list_cache.cached_at = time.time()
+
+    def _upsert_task_in_cache(self, task: UploadTask) -> None:
+        if not self._task_list_cache:
+            self._stats_cache = None
+            return
+        replaced = False
+        tasks = self._task_list_cache.tasks
+        for index, existing in enumerate(tasks):
+            if existing.id == task.id:
+                tasks[index] = task.model_copy()
+                replaced = True
+                break
+        if not replaced:
+            tasks.append(task.model_copy())
+        self._sort_cached_tasks()
+        self._refresh_stats_cache_from_task_cache()
+        self._page_cache.clear()
+
+    def _remove_task_from_cache(self, task_id: str) -> None:
+        if not self._task_list_cache:
+            self._stats_cache = None
+            self._page_cache.clear()
+            return
+        self._task_list_cache.tasks = [
+            item for item in self._task_list_cache.tasks if item.id != task_id
+        ]
+        self._task_list_cache.cached_at = time.time()
+        self._refresh_stats_cache_from_task_cache()
+        self._page_cache.clear()
+
+    def _remove_tasks_from_cache(self, task_ids: set[str]) -> None:
+        if not self._task_list_cache:
+            self._stats_cache = None
+            self._page_cache.clear()
+            return
+        self._task_list_cache.tasks = [
+            item for item in self._task_list_cache.tasks if item.id not in task_ids
+        ]
+        self._task_list_cache.cached_at = time.time()
+        self._refresh_stats_cache_from_task_cache()
+        self._page_cache.clear()
+
+    def _remove_tasks_by_status(self, statuses: set[str]) -> None:
+        if not self._task_list_cache:
+            self._stats_cache = None
+            self._page_cache.clear()
+            return
+        self._task_list_cache.tasks = [
+            item
+            for item in self._task_list_cache.tasks
+            if (item.status.value if hasattr(item.status, "value") else str(item.status)) not in statuses
+        ]
+        self._task_list_cache.cached_at = time.time()
+        self._refresh_stats_cache_from_task_cache()
+        self._page_cache.clear()
 
     def get_scan_cursor(self, folder_id: str) -> int:
         if not folder_id:

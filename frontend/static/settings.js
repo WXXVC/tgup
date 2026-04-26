@@ -221,28 +221,34 @@ function shouldHydrateSettingsForm(formName) {
   return !state.ui.dirtyForms[formName];
 }
 
-export async function loadSettings() {
+export async function loadSettings(forceFull = false) {
   let shouldRenderAfterLoad = true;
+  const needFull = forceFull || state.activeTab === "settings";
   state.ui.loading.settings = true;
   state.ui.errors.settings = "";
   if (!state.settings) {
-    if (state.activeTab === "settings") {
+    if (needFull) {
       renderSettings();
     } else {
       renderSettingsLite();
     }
   }
   try {
-    const payload = await api("/api/settings");
+    const payload = await api(needFull ? "/api/settings" : "/api/settings/summary");
     const nextSignature = JSON.stringify({
       settings: payload.settings,
       login: payload.login,
     });
     const payloadChanged = nextSignature !== lastSettingsPayloadSignature;
-    state.settings = payload.settings;
+    state.settings = needFull
+      ? payload.settings
+      : {
+        ...(state.settings || {}),
+        ...payload.settings,
+      };
     state.login = payload.login;
     lastSettingsPayloadSignature = nextSignature;
-    if (!payloadChanged && state.activeTab !== "settings") {
+    if (!payloadChanged && !needFull) {
       shouldRenderAfterLoad = false;
     }
   } catch (error) {
@@ -251,7 +257,7 @@ export async function loadSettings() {
   } finally {
     state.ui.loading.settings = false;
     if (shouldRenderAfterLoad) {
-      if (state.activeTab === "settings") {
+      if (needFull) {
         renderSettings();
       } else {
         renderSettingsLite();

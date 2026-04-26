@@ -120,6 +120,15 @@ def init_db() -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_file_index_folder_seen ON file_index(folder_id, last_seen_at)"
         )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uploads_status_updated ON uploads(status, updated_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uploads_folder_status_updated ON uploads(folder_id, status, updated_at DESC)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_uploads_folder_updated ON uploads(folder_id, updated_at DESC)"
+        )
         connection.commit()
 
 

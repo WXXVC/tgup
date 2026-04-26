@@ -76,14 +76,10 @@ export async function loadUploads() {
       search: state.taskSearch || "",
       sort: state.taskSort || "updated_desc",
     });
-    const [uploads, stats] = await Promise.all([
-      api(`/api/uploads?${params.toString()}`),
-      api("/api/uploads/stats"),
-    ]);
+    const uploads = await api(`/api/uploads?${params.toString()}`);
     state.uploads = uploads.items || [];
     state.uploadPagination = uploads.pagination || state.uploadPagination;
     state.uploadTotalAll = uploads.total_all || 0;
-    state.uploadStats = stats;
     state.selectedUploadTaskIds = new Set(
       [...state.selectedUploadTaskIds].filter((taskId) => state.uploads.some((item) => item.id === taskId)),
     );
@@ -468,20 +464,23 @@ export function renderUploads() {
   renderUploadSummary(pageItems, pagination);
 
   if (state.ui.loading.uploads) {
-    renderUploadPagination({ totalItems: 0 });
+    const hasExistingTasks = pageItems.length > 0;
+    renderUploadPagination(hasExistingTasks ? pagination : { totalItems: 0 });
     setPanelFeedback("upload-feedback", {
       visible: true,
       tone: "info",
       title: "正在加载任务列表",
-      message: "任务状态和统计信息正在刷新。",
+      message: "任务列表正在刷新，当前内容先保持显示。",
     });
     const summary = document.getElementById("upload-summary");
     if (summary) {
-      lastUploadSummaryText = "正在同步任务列表...";
+      lastUploadSummaryText = hasExistingTasks ? "正在后台刷新任务列表…" : "正在同步任务列表...";
       summary.textContent = lastUploadSummaryText;
     }
-    setNodeHtmlIfChanged(container, taskSkeleton());
-    return;
+    if (!hasExistingTasks) {
+      setNodeHtmlIfChanged(container, taskSkeleton());
+      return;
+    }
   }
 
   if (state.ui.errors.uploads) {

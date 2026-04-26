@@ -24,6 +24,15 @@ class FileListCacheEntry:
 
 
 @dataclass
+class FileListPageCacheEntry:
+    cached_at: float
+    items: list[FileEntry]
+    stats: FileListStats
+    pagination: FileListPagination
+    total_all: int
+
+
+@dataclass
 class DirectoryTreeCacheEntry:
     cached_at: float
     nodes: list[FileTreeNode]
@@ -31,14 +40,18 @@ class DirectoryTreeCacheEntry:
 
 class FolderScanner:
     FILE_LIST_CACHE_SECONDS = 1.5
+    FILE_LIST_PAGE_CACHE_SECONDS = 1.5
     DIRECTORY_TREE_CACHE_SECONDS = 10.0
+    DIRECTORY_TREE_VIEW_CACHE_SECONDS = 5.0
     DEFAULT_SCAN_SUBDIR_BATCH_SIZE = 12
 
     def __init__(self, upload_repo: UploadRepository) -> None:
         self.upload_repo = upload_repo
         self._stability_snapshots: dict[tuple[str, str], FileStabilitySnapshot] = {}
         self._file_list_cache: dict[tuple[str, str, int], FileListCacheEntry] = {}
+        self._file_page_cache: dict[tuple[str, str, str, str, str, str, str, int, int], FileListPageCacheEntry] = {}
         self._directory_tree_cache: dict[str, DirectoryTreeCacheEntry] = {}
+        self._directory_tree_view_cache: dict[tuple[str, str], DirectoryTreeCacheEntry] = {}
 
     def list_files(self, folder_id: str, path: str, min_stable_seconds: int = 0) -> list[FileEntry]:
         cache_key = (folder_id, str(Path(path)), int(min_stable_seconds or 0))
@@ -234,6 +247,26 @@ class FolderScanner:
         normalized_search = str(search or "").strip().lower()
         page_size = page_size if page_size in {10, 20, 50, 100} else 10
         page = max(1, page)
+        cache_key = (
+            folder_id,
+            str(root),
+            normalized_subdir,
+            normalized_scope,
+            normalized_type,
+            normalized_status,
+            normalized_search,
+            page,
+            page_size,
+        )
+        now = time.time()
+        cached_page = self._file_page_cache.get(cache_key)
+        if cached_page and (now - cached_page.cached_at) <= self.FILE_LIST_PAGE_CACHE_SECONDS:
+            return (
+                [item.model_copy() for item in cached_page.items],
+                cached_page.stats.model_copy(),
+                cached_page.pagination.model_copy(),
+                cached_page.total_all,
+            )
 
         if db_available:
             indexed_items, indexed_stats, indexed_pagination, indexed_total_all, _ = (
@@ -249,6 +282,13 @@ class FolderScanner:
                 )
             )
             if indexed_total_all > 0:
+                self._file_page_cache[cache_key] = FileListPageCacheEntry(
+                    cached_at=now,
+                    items=[item.model_copy() for item in indexed_items],
+                    stats=indexed_stats.model_copy(),
+                    pagination=indexed_pagination.model_copy(),
+                    total_all=indexed_total_all,
+                )
                 return indexed_items, indexed_stats, indexed_pagination, indexed_total_all
 
         target_dir = root / normalized_subdir if normalized_subdir else root
@@ -388,6 +428,13 @@ class FolderScanner:
             start=(start_index + 1) if total_items else 0,
             end=min(end_index, total_items),
         )
+        self._file_page_cache[cache_key] = FileListPageCacheEntry(
+            cached_at=now,
+            items=[item.model_copy() for item in page_entries],
+            stats=stats.model_copy(),
+            pagination=pagination.model_copy(),
+            total_all=total_in_scope,
+        )
         return page_entries, stats, pagination, total_in_scope
 
     def filter_files(
@@ -518,6 +565,11 @@ class FolderScanner:
             return []
 
         normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        cache_key = (str(root.resolve()), normalized_subdir)
+        now = time.time()
+        cached = self._directory_tree_view_cache.get(cache_key)
+        if cached and (now - cached.cached_at) <= self.DIRECTORY_TREE_VIEW_CACHE_SECONDS:
+            return [item.model_copy() for item in cached.nodes]
         focus_parts = [part for part in normalized_subdir.split("/") if part] if normalized_subdir else []
         prefixes = []
         current = ""
@@ -565,10 +617,15 @@ class FolderScanner:
             ensure_node(prefix)
             list_child_dirs(prefix)
 
-        return [
+        nodes_list = [
             nodes[key].model_copy(update={"children": sorted(nodes[key].children)})
             for key in sorted(nodes)
         ]
+        self._directory_tree_view_cache[cache_key] = DirectoryTreeCacheEntry(
+            cached_at=now,
+            nodes=[item.model_copy() for item in nodes_list],
+        )
+        return nodes_list
 
     def summarize_files(self, entries: list[FileEntry]) -> FileListStats:
         return FileListStats(
@@ -645,9 +702,15 @@ class FolderScanner:
     def invalidate_file_list_cache(self, folder_id: str | None = None) -> None:
         if folder_id is None:
             self._file_list_cache.clear()
+            self._file_page_cache.clear()
             self._directory_tree_cache.clear()
+            self._directory_tree_view_cache.clear()
             return
         stale_keys = [key for key in self._file_list_cache if key[0] == folder_id]
         for key in stale_keys:
             self._file_list_cache.pop(key, None)
+        stale_page_keys = [key for key in self._file_page_cache if key[0] == folder_id]
+        for key in stale_page_keys:
+            self._file_page_cache.pop(key, None)
         self._directory_tree_cache.clear()
+        self._directory_tree_view_cache.clear()

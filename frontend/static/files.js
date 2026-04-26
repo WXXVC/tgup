@@ -186,7 +186,7 @@ function renderDirectoryTree() {
         <small>${node.count}</small>
       </button>
     `).join("")
-    : `<p class="muted">当前目录没有子目录。</p>`;
+    : `<p class="muted">${state.ui.loading.fileTree ? "正在加载目录树…" : "当前目录没有子目录。"}</p>`;
   if (treeMarkup !== lastDirectoryTreeMarkup) {
     container.innerHTML = treeMarkup;
     lastDirectoryTreeMarkup = treeMarkup;
@@ -337,19 +337,22 @@ export function renderFiles() {
 
   if (state.ui.loading.files) {
     renderDirectoryTree();
-    renderFilePagination({ totalItems: 0 });
+    const hasExistingFiles = state.files.length > 0;
+    renderFilePagination(hasExistingFiles ? (state.filePagination || { totalItems: 0 }) : { totalItems: 0 });
     setPanelFeedback("file-feedback", {
       visible: true,
       tone: "info",
       title: "正在加载文件",
-      message: "文件列表与目录树正在同步，请稍候。",
+      message: hasExistingFiles ? "文件列表正在后台刷新，当前内容先保持显示。" : "文件列表与目录树正在同步，请稍候。",
     });
-    const markup = fileSkeleton();
-    if (markup !== lastFileListMarkup) {
-      container.innerHTML = markup;
-      lastFileListMarkup = markup;
+    if (!hasExistingFiles) {
+      const markup = fileSkeleton();
+      if (markup !== lastFileListMarkup) {
+        container.innerHTML = markup;
+        lastFileListMarkup = markup;
+      }
     }
-    summary.textContent = "正在读取文件列表…";
+    summary.textContent = hasExistingFiles ? "正在后台刷新文件列表…" : "正在读取文件列表…";
     return;
   }
 
@@ -405,6 +408,7 @@ export function renderFiles() {
 }
 
 export async function loadFiles(folderId, resetSelection = true) {
+  const requestToken = ++state.requests.fileListToken;
   if (!folderId) {
     state.selectedFolderId = "";
     state.currentSubdir = "";
@@ -421,6 +425,8 @@ export async function loadFiles(folderId, resetSelection = true) {
       end: 0,
     };
     state.filePage = 1;
+    state.ui.loading.fileTree = false;
+    state.ui.errors.fileTree = "";
     if (resetSelection) {
       state.selectedFiles.clear();
     }
@@ -437,6 +443,7 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.filePage = 1;
   }
   renderFiles();
+  void loadFileTree(folderId, state.currentSubdir);
   try {
     const params = new URLSearchParams({
       page: String(state.filePage || 1),
@@ -448,22 +455,67 @@ export async function loadFiles(folderId, resetSelection = true) {
       search: state.fileSearch || "",
     });
     const payload = await api(`/api/folders/${folderId}/files?${params.toString()}`);
+    if (requestToken !== state.requests.fileListToken) {
+      return;
+    }
     state.files = payload.items || [];
-    state.fileTreeNodes = payload.tree || [];
     state.fileStats = payload.stats || null;
     state.filePagination = payload.pagination || state.filePagination;
     state.fileTotalAll = payload.total_all || 0;
     state.filePage = payload.pagination?.page || state.filePage;
     state.filePageSize = payload.pagination?.page_size || state.filePageSize;
   } catch (error) {
+    if (requestToken !== state.requests.fileListToken) {
+      return;
+    }
     state.ui.errors.files = error.message;
     state.files = [];
     state.fileTreeNodes = [];
     state.fileStats = null;
     state.fileTotalAll = 0;
   } finally {
+    if (requestToken !== state.requests.fileListToken) {
+      return;
+    }
     state.ui.loading.files = false;
     renderFiles();
+  }
+}
+
+export async function loadFileTree(folderId, subdir = "") {
+  const requestToken = ++state.requests.fileTreeToken;
+  if (!folderId) {
+    state.fileTreeNodes = [];
+    state.ui.loading.fileTree = false;
+    state.ui.errors.fileTree = "";
+    renderDirectoryTree();
+    return;
+  }
+  state.ui.loading.fileTree = true;
+  state.ui.errors.fileTree = "";
+  renderDirectoryTree();
+  try {
+    const params = new URLSearchParams({ subdir: subdir || "" });
+    const payload = await api(`/api/folders/${folderId}/tree?${params.toString()}`);
+    if (
+      requestToken !== state.requests.fileTreeToken
+      || state.selectedFolderId !== folderId
+      || state.currentSubdir !== (subdir || "")
+    ) {
+      return;
+    }
+    state.fileTreeNodes = payload.items || [];
+  } catch (error) {
+    if (requestToken !== state.requests.fileTreeToken) {
+      return;
+    }
+    state.ui.errors.fileTree = error.message;
+  } finally {
+    if (requestToken !== state.requests.fileTreeToken) {
+      return;
+    }
+    state.ui.loading.fileTree = false;
+    renderDirectoryTree();
   }
 }
 

@@ -63,11 +63,13 @@ export const state = {
     loading: {
       settings: true,
       files: false,
+      fileTree: false,
       uploads: true,
     },
     errors: {
       settings: "",
       files: "",
+      fileTree: "",
       uploads: "",
     },
     dirtyForms: {
@@ -84,6 +86,10 @@ export const state = {
   previewSize: "medium",
   activeTaskDetailId: "",
   channelBotSetupSummaryByChannel: {},
+  requests: {
+    fileListToken: 0,
+    fileTreeToken: 0,
+  },
 };
 
 export function getTaskById(taskId) {
