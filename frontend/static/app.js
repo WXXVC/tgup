@@ -730,21 +730,19 @@ function wireEvents() {
         ? `/api/settings/bot-api/accounts/${accountId}`
         : "/api/settings/bot-api/accounts";
       const savedAccount = await submitJson(endpoint, payload, accountId ? "PUT" : "POST");
-      resultNode.textContent = "测试中...";
       if (!savedAccount) {
         throw new Error("保存成功，但未找到对应账号");
       }
-      const result = await api(`/api/settings/bot-api/accounts/${savedAccount.id}/test`, { method: "POST", body: "{}" });
       resetBotApiAccountForm();
       closeDialog("bot-api-dialog");
       setSettingsFormDirty("botApi", false);
       await loadSettings();
-      resultNode.textContent = `连接成功：${result.first_name || result.username || "Bot"} (${result.id || "unknown"})`;
-      pushToast(accountId ? "Bot API 账号已更新并测试成功" : "Bot API 账号已创建并测试成功", "success");
+      resultNode.textContent = "保存成功，可点击“测试”验证连接";
+      pushToast(accountId ? "Bot API 账号已更新" : "Bot API 账号已创建", "success");
     } catch (error) {
       await loadSettings();
-      resultNode.textContent = `连接失败：${error.message}`;
-      pushToast(`Bot API 保存或测试失败：${error.message}`, "error");
+      resultNode.textContent = `保存失败：${error.message}`;
+      pushToast(`Bot API 保存失败：${error.message}`, "error");
     }
   });
 
