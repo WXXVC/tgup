@@ -38,6 +38,7 @@ class UploadManager:
     SIMILARITY_RECHECK_SECONDS = 5
     TELEGRAM_MEDIA_GROUP_LIMIT = 10
     BOT_API_FILE_LIMIT_BYTES = 50 * 1024 * 1024
+    SCAN_SUBDIR_BATCH_SIZE = 12
     SIMILARITY_NOISE_PATTERNS = (
         r"\b(?:\d{3,4}p|4k|8k|x26[45]|h\.?26[45]|hevc|avc|hdr|sdr|uhd|web[-_. ]?dl|blu[-_. ]?ray|bdrip|webrip|dvdrip)\b",
         r"\b(?:aac|flac|mp3|ddp\d?(?:\.\d)?|dts|truehd|atmos)\b",
@@ -70,6 +71,7 @@ class UploadManager:
         self._channel_locks: dict[str, asyncio.Lock] = {}
         self._manual_task_ids: set[str] = set()
         self._locked_retry_tasks: dict[str, asyncio.Task] = {}
+        self._scan_subdir_cursors: dict[str, int] = {}
 
     async def start(self) -> None:
         self.video_splitter.cleanup_orphans(self.upload_repo.list_task_ids())
@@ -1126,14 +1128,25 @@ class UploadManager:
         return score * 100
 
     def _list_pending_paths(self, folder: FolderConfig) -> list[str]:
+        if folder.id not in self._scan_subdir_cursors:
+            self._scan_subdir_cursors[folder.id] = self.upload_repo.get_scan_cursor(
+                folder.id
+            )
+        cursor = self._scan_subdir_cursors.get(folder.id, 0)
+        entries, next_cursor, total_subdirs = self.scanner.list_scannable_files_chunked(
+            folder.id,
+            folder.path,
+            min_stable_seconds=folder.min_stable_seconds,
+            excluded_subdirs=folder.excluded_subdirs,
+            subdir_cursor=cursor,
+            subdir_batch_size=self.SCAN_SUBDIR_BATCH_SIZE,
+        )
+        persisted_cursor = next_cursor if total_subdirs > 0 else 0
+        self._scan_subdir_cursors[folder.id] = persisted_cursor
+        self.upload_repo.set_scan_cursor(folder.id, persisted_cursor)
         return [
             item.relative_path
-            for item in self.scanner.list_scannable_files(
-                folder.id,
-                folder.path,
-                folder.min_stable_seconds,
-                folder.excluded_subdirs,
-            )
+            for item in entries
             if item.status == UploadStatus.PENDING
             and not self.upload_repo.has_active_task_for_file(
                 folder.id, item.relative_path

@@ -429,10 +429,10 @@ export async function loadFiles(folderId, resetSelection = true) {
   state.selectedFolderId = folderId;
   state.ui.loading.files = true;
   state.ui.errors.files = "";
-  state.filePage = 1;
   if (resetSelection) {
     state.selectedFiles.clear();
     state.currentSubdir = "";
+    state.filePage = 1;
   }
   renderFiles();
   try {

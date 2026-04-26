@@ -611,22 +611,24 @@ async def folder_files(
     )
     if not folder:
         raise HTTPException(status_code=404, detail="folder not found")
-    entries = scanner.list_files(folder.id, folder.path, folder.min_stable_seconds)
-    filtered = scanner.filter_files(
-        entries,
+    items, stats, pagination, total_all = scanner.list_files_paginated(
+        folder.id,
+        folder.path,
+        min_stable_seconds=folder.min_stable_seconds,
         subdir=subdir,
         scope=scope,
         file_type=file_type,
         status=status,
         search=search,
+        page=page,
+        page_size=page_size,
     )
-    items, pagination = scanner.paginate_files(filtered, page=page, page_size=page_size)
     return FileListResponse(
         items=items,
-        tree=scanner.build_directory_tree(entries),
-        stats=scanner.summarize_files(filtered),
+        tree=scanner.build_directory_tree_for_root(folder.path),
+        stats=stats,
         pagination=pagination,
-        total_all=len(entries),
+        total_all=total_all,
     )
 
 

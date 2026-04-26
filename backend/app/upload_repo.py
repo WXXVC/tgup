@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from .db import get_connection
 from .models import (
+    FileEntry,
+    FileListPagination,
+    FileListStats,
     UploadBatchItem,
     UploadListPagination,
     UploadListResponse,
@@ -215,15 +219,18 @@ class UploadRepository:
         return stats
 
     def is_uploaded(self, folder_id: str, relative_path: str, size: int, modified_at: float) -> bool:
-        with get_connection() as connection:
-            row = connection.execute(
-                """
-                SELECT 1 FROM uploaded_files
-                WHERE folder_id = ? AND relative_path = ? AND file_size = ? AND modified_at = ?
-                """,
-                (folder_id, relative_path, size, modified_at),
-            ).fetchone()
-        return row is not None
+        try:
+            with get_connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT 1 FROM uploaded_files
+                    WHERE folder_id = ? AND relative_path = ? AND file_size = ? AND modified_at = ?
+                    """,
+                    (folder_id, relative_path, size, modified_at),
+                ).fetchone()
+            return row is not None
+        except sqlite3.Error:
+            return False
 
     def mark_uploaded(
         self,
@@ -253,6 +260,193 @@ class UploadRepository:
 
     def invalidate_task_list_cache(self) -> None:
         self._task_list_cache = None
+
+    def get_scan_cursor(self, folder_id: str) -> int:
+        if not folder_id:
+            return 0
+        with get_connection() as connection:
+            row = connection.execute(
+                "SELECT subdir_cursor FROM scan_state WHERE folder_id = ?",
+                (folder_id,),
+            ).fetchone()
+        if not row:
+            return 0
+        try:
+            return max(0, int(row["subdir_cursor"] or 0))
+        except Exception:
+            return 0
+
+    def set_scan_cursor(self, folder_id: str, cursor: int) -> None:
+        if not folder_id:
+            return
+        normalized_cursor = max(0, int(cursor or 0))
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO scan_state (folder_id, subdir_cursor, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(folder_id) DO UPDATE SET
+                    subdir_cursor = excluded.subdir_cursor,
+                    updated_at = excluded.updated_at
+                """,
+                (folder_id, normalized_cursor, time.time()),
+            )
+            connection.commit()
+
+    def upsert_file_index_entries(
+        self,
+        folder_id: str,
+        entries: list[FileEntry],
+    ) -> None:
+        if not folder_id or not entries:
+            return
+        now = time.time()
+        rows = []
+        for entry in entries:
+            parent_dir = "/".join(str(entry.relative_path).replace("\\", "/").split("/")[:-1])
+            status = entry.status.value if hasattr(entry.status, "value") else str(entry.status)
+            rows.append(
+                (
+                    folder_id,
+                    entry.relative_path,
+                    parent_dir,
+                    entry.absolute_path,
+                    entry.file_type,
+                    int(entry.size),
+                    float(entry.modified_at),
+                    status,
+                    now,
+                )
+            )
+        try:
+            with get_connection() as connection:
+                connection.executemany(
+                    """
+                    INSERT INTO file_index (
+                        folder_id, relative_path, parent_dir, absolute_path, file_type,
+                        file_size, modified_at, status, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(folder_id, relative_path) DO UPDATE SET
+                        parent_dir = excluded.parent_dir,
+                        absolute_path = excluded.absolute_path,
+                        file_type = excluded.file_type,
+                        file_size = excluded.file_size,
+                        modified_at = excluded.modified_at,
+                        status = excluded.status,
+                        last_seen_at = excluded.last_seen_at
+                    """,
+                    rows,
+                )
+                connection.commit()
+        except sqlite3.Error:
+            return
+
+    def query_file_index(
+        self,
+        *,
+        folder_id: str,
+        subdir: str = "",
+        scope: str = "direct",
+        file_type: str = "all",
+        status: str = "all",
+        search: str = "",
+        page: int = 1,
+        page_size: int = 10,
+    ) -> tuple[list[FileEntry], FileListStats, FileListPagination, int, int]:
+        normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        normalized_scope = scope if scope in {"direct", "recursive"} else "direct"
+        normalized_type = str(file_type or "all").strip().lower()
+        normalized_status = str(status or "all").strip().lower()
+        normalized_search = str(search or "").strip().lower()
+        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page = max(1, page)
+
+        conditions = ["folder_id = ?"]
+        params: list[Any] = [folder_id]
+        if normalized_scope == "direct":
+            conditions.append("parent_dir = ?")
+            params.append(normalized_subdir)
+        elif normalized_subdir:
+            conditions.append("(parent_dir = ? OR parent_dir LIKE ?)")
+            params.extend([normalized_subdir, f"{normalized_subdir}/%"])
+        if normalized_type != "all":
+            conditions.append("LOWER(file_type) = ?")
+            params.append(normalized_type)
+        if normalized_status != "all":
+            conditions.append("LOWER(status) = ?")
+            params.append(normalized_status)
+        if normalized_search:
+            conditions.append("(LOWER(relative_path) LIKE ? OR LOWER(absolute_path) LIKE ?)")
+            like = f"%{normalized_search}%"
+            params.extend([like, like])
+
+        where_sql = " AND ".join(conditions)
+        try:
+            with get_connection() as connection:
+                total_all = connection.execute(
+                    "SELECT COUNT(*) FROM file_index WHERE folder_id = ?",
+                    (folder_id,),
+                ).fetchone()[0]
+                total_items = connection.execute(
+                    f"SELECT COUNT(*) FROM file_index WHERE {where_sql}",
+                    tuple(params),
+                ).fetchone()[0]
+                stat_rows = connection.execute(
+                    f"SELECT status, COUNT(*) AS count FROM file_index WHERE {where_sql} GROUP BY status",
+                    tuple(params),
+                ).fetchall()
+                total_pages = max(1, (total_items + page_size - 1) // page_size)
+                page = min(max(1, page), total_pages)
+                offset = (page - 1) * page_size
+                rows = connection.execute(
+                    f"""
+                    SELECT relative_path, absolute_path, file_type, file_size, modified_at, status
+                    FROM file_index
+                    WHERE {where_sql}
+                    ORDER BY relative_path COLLATE NOCASE ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    tuple([*params, page_size, offset]),
+                ).fetchall()
+        except sqlite3.Error:
+            empty = FileListPagination(
+                page=1,
+                page_size=page_size,
+                total_pages=1,
+                total_items=0,
+                start=0,
+                end=0,
+            )
+            return [], FileListStats(), empty, 0, 0
+        stats = FileListStats(total=total_items)
+        for row in stat_rows:
+            key = str(row["status"] or "").lower()
+            if key == "pending":
+                stats.pending = row["count"]
+            elif key == "uploaded":
+                stats.uploaded = row["count"]
+            elif key == "locked":
+                stats.locked = row["count"]
+        items = [
+            FileEntry(
+                relative_path=row["relative_path"],
+                absolute_path=row["absolute_path"],
+                file_type=row["file_type"],
+                size=row["file_size"],
+                modified_at=row["modified_at"],
+                status=row["status"],
+            )
+            for row in rows
+        ]
+        pagination = FileListPagination(
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            total_items=total_items,
+            start=(offset + 1) if total_items else 0,
+            end=min(offset + page_size, total_items),
+        )
+        return items, stats, pagination, total_all, total_items
 
     def has_active_task_for_file(self, folder_id: str, relative_path: str) -> bool:
         normalized_path = str(relative_path or "").strip().replace("\\", "/")

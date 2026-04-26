@@ -89,6 +89,37 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scan_state (
+                folder_id TEXT PRIMARY KEY,
+                subdir_cursor INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS file_index (
+                folder_id TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                parent_dir TEXT NOT NULL DEFAULT '',
+                absolute_path TEXT NOT NULL,
+                file_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                modified_at REAL NOT NULL,
+                status TEXT NOT NULL,
+                last_seen_at REAL NOT NULL,
+                PRIMARY KEY (folder_id, relative_path)
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_index_folder_parent ON file_index(folder_id, parent_dir)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_file_index_folder_seen ON file_index(folder_id, last_seen_at)"
+        )
         connection.commit()
 
 

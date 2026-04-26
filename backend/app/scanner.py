@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,13 +23,22 @@ class FileListCacheEntry:
     entries: list[FileEntry]
 
 
+@dataclass
+class DirectoryTreeCacheEntry:
+    cached_at: float
+    nodes: list[FileTreeNode]
+
+
 class FolderScanner:
     FILE_LIST_CACHE_SECONDS = 1.5
+    DIRECTORY_TREE_CACHE_SECONDS = 10.0
+    DEFAULT_SCAN_SUBDIR_BATCH_SIZE = 12
 
     def __init__(self, upload_repo: UploadRepository) -> None:
         self.upload_repo = upload_repo
         self._stability_snapshots: dict[tuple[str, str], FileStabilitySnapshot] = {}
         self._file_list_cache: dict[tuple[str, str, int], FileListCacheEntry] = {}
+        self._directory_tree_cache: dict[str, DirectoryTreeCacheEntry] = {}
 
     def list_files(self, folder_id: str, path: str, min_stable_seconds: int = 0) -> list[FileEntry]:
         cache_key = (folder_id, str(Path(path)), int(min_stable_seconds or 0))
@@ -104,8 +114,265 @@ class FolderScanner:
         self._prune_stability_snapshots(folder_id, active_keys)
         return entries
 
+    def list_scannable_files_chunked(
+        self,
+        folder_id: str,
+        path: str,
+        *,
+        min_stable_seconds: int = 0,
+        excluded_subdirs: list[str] | None = None,
+        subdir_cursor: int = 0,
+        subdir_batch_size: int | None = None,
+    ) -> tuple[list[FileEntry], int, int]:
+        root = Path(path)
+        if not root.exists():
+            return [], 0, 0
+        excluded = {
+            item.strip().replace("\\", "/").strip("/")
+            for item in (excluded_subdirs or [])
+            if item and item.strip().replace("\\", "/").strip("/")
+        }
+        batch_size = max(1, int(subdir_batch_size or self.DEFAULT_SCAN_SUBDIR_BATCH_SIZE))
+
+        root_files: list[Path] = []
+        top_level_dirs: list[Path] = []
+        for item in sorted(root.iterdir(), key=lambda p: p.name.casefold()):
+            relative = str(item.relative_to(root)).replace("\\", "/")
+            if item.is_dir():
+                if relative in excluded or self._is_excluded(relative, excluded):
+                    continue
+                top_level_dirs.append(item)
+            elif item.is_file():
+                root_files.append(item)
+
+        total_subdirs = len(top_level_dirs)
+        if total_subdirs <= 0:
+            selected_dirs: list[Path] = []
+            next_cursor = 0
+        else:
+            cursor = subdir_cursor % total_subdirs
+            end = min(cursor + batch_size, total_subdirs)
+            selected_dirs = top_level_dirs[cursor:end]
+            next_cursor = 0 if end >= total_subdirs else end
+
+        def build_entry(file_path: Path) -> FileEntry:
+            stat = file_path.stat()
+            relative = str(file_path.relative_to(root)).replace("\\", "/")
+            uploaded = self.upload_repo.is_uploaded(
+                folder_id, relative, stat.st_size, stat.st_mtime
+            )
+            locked = False if uploaded else self.is_file_unavailable(
+                folder_id, path, file_path, min_stable_seconds
+            )
+            return FileEntry(
+                relative_path=relative,
+                absolute_path=str(file_path),
+                file_type=classify_file(file_path),
+                size=stat.st_size,
+                modified_at=stat.st_mtime,
+                status=derive_status(uploaded, locked),
+            )
+
+        entries: list[FileEntry] = []
+        for file_path in root_files:
+            relative = str(file_path.relative_to(root)).replace("\\", "/")
+            if self._is_excluded(relative, excluded):
+                continue
+            entries.append(build_entry(file_path))
+        for top_dir in selected_dirs:
+            for current_dir, dir_names, file_names in os.walk(top_dir):
+                dir_names.sort(key=str.casefold)
+                file_names.sort(key=str.casefold)
+                current_path = Path(current_dir)
+                for file_name in file_names:
+                    file_path = current_path / file_name
+                    relative = str(file_path.relative_to(root)).replace("\\", "/")
+                    if self._is_excluded(relative, excluded):
+                        continue
+                    entries.append(build_entry(file_path))
+        return entries, next_cursor, total_subdirs
+
     def build_caption(self, folder_path: str, absolute_path: str) -> str:
         return build_caption(Path(folder_path), Path(absolute_path))
+
+    def list_files_paginated(
+        self,
+        folder_id: str,
+        path: str,
+        *,
+        min_stable_seconds: int = 0,
+        subdir: str = "",
+        scope: str = "direct",
+        file_type: str = "all",
+        status: str = "all",
+        search: str = "",
+        page: int = 1,
+        page_size: int = 10,
+    ) -> tuple[list[FileEntry], FileListStats, FileListPagination, int]:
+        root = Path(path)
+        if not root.exists():
+            empty_pagination = FileListPagination(
+                page=1,
+                page_size=page_size if page_size in {10, 20, 50, 100} else 10,
+                total_pages=1,
+                total_items=0,
+                start=0,
+                end=0,
+            )
+            return [], FileListStats(), empty_pagination, 0
+
+        normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        normalized_scope = scope if scope in {"direct", "recursive"} else "direct"
+        normalized_type = str(file_type or "all").strip().lower()
+        normalized_status = str(status or "all").strip().lower()
+        normalized_search = str(search or "").strip().lower()
+        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page = max(1, page)
+
+        indexed_items, indexed_stats, indexed_pagination, indexed_total_all, _ = (
+            self.upload_repo.query_file_index(
+                folder_id=folder_id,
+                subdir=subdir,
+                scope=scope,
+                file_type=file_type,
+                status=status,
+                search=search,
+                page=page,
+                page_size=page_size,
+            )
+        )
+        if indexed_total_all > 0:
+            return indexed_items, indexed_stats, indexed_pagination, indexed_total_all
+
+        target_dir = root / normalized_subdir if normalized_subdir else root
+        try:
+            resolved_target = target_dir.resolve()
+            resolved_root = root.resolve()
+            resolved_target.relative_to(resolved_root)
+        except Exception:
+            empty_pagination = FileListPagination(
+                page=1,
+                page_size=page_size,
+                total_pages=1,
+                total_items=0,
+                start=0,
+                end=0,
+            )
+            return [], FileListStats(), empty_pagination, 0
+        if not target_dir.exists() or not target_dir.is_dir():
+            empty_pagination = FileListPagination(
+                page=1,
+                page_size=page_size,
+                total_pages=1,
+                total_items=0,
+                start=0,
+                end=0,
+            )
+            return [], FileListStats(), empty_pagination, 0
+
+        def iter_file_paths():
+            if normalized_scope == "direct":
+                for item in sorted(target_dir.iterdir(), key=lambda p: p.name.casefold()):
+                    if item.is_file():
+                        yield item
+                return
+            for current_dir, dir_names, file_names in os.walk(target_dir):
+                dir_names.sort(key=str.casefold)
+                file_names.sort(key=str.casefold)
+                current_path = Path(current_dir)
+                for file_name in file_names:
+                    yield current_path / file_name
+
+        def build_entry(file_path: Path) -> FileEntry:
+            stat = file_path.stat()
+            relative = str(file_path.relative_to(root)).replace("\\", "/")
+            uploaded = self.upload_repo.is_uploaded(
+                folder_id, relative, stat.st_size, stat.st_mtime
+            )
+            locked = False if uploaded else self.is_file_unavailable(
+                folder_id, path, file_path, min_stable_seconds
+            )
+            return FileEntry(
+                relative_path=relative,
+                absolute_path=str(file_path),
+                file_type=classify_file(file_path),
+                size=stat.st_size,
+                modified_at=stat.st_mtime,
+                status=derive_status(uploaded, locked),
+            )
+
+        def matches(entry: FileEntry) -> bool:
+            entry_type = (
+                entry.file_type.value if hasattr(entry.file_type, "value") else str(entry.file_type)
+            ).lower()
+            if normalized_type != "all" and entry_type != normalized_type:
+                return False
+            entry_status = (
+                entry.status.value if hasattr(entry.status, "value") else str(entry.status)
+            ).lower()
+            if normalized_status != "all" and entry_status != normalized_status:
+                return False
+            if normalized_search:
+                haystack = f"{entry.relative_path} {entry.absolute_path}".lower()
+                if normalized_search not in haystack:
+                    return False
+            return True
+
+        total_in_scope = 0
+        total_items = 0
+        stats = FileListStats()
+        page_entries: list[FileEntry] = []
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        active_keys: set[tuple[str, str]] = set()
+        for file_path in iter_file_paths():
+            entry = build_entry(file_path)
+            active_keys.add((folder_id, entry.relative_path))
+            if normalized_scope == "direct":
+                self.upload_repo.upsert_file_index_entries(folder_id, [entry])
+            total_in_scope += 1
+            if not matches(entry):
+                continue
+            total_items += 1
+            stats.total += 1
+            entry_status = (
+                entry.status.value if hasattr(entry.status, "value") else str(entry.status)
+            ).lower()
+            if entry_status == "pending":
+                stats.pending += 1
+            elif entry_status == "uploaded":
+                stats.uploaded += 1
+            elif entry_status == "locked":
+                stats.locked += 1
+            if start_index <= (total_items - 1) < end_index:
+                page_entries.append(entry)
+
+        self._prune_stability_snapshots(folder_id, active_keys)
+        total_pages = max(1, (total_items + page_size - 1) // page_size)
+        safe_page = min(max(1, page), total_pages)
+        if safe_page != page:
+            # 若页码越界，则基于已知总量重新切页；只在极少数情况下触发一次轻量重扫。
+            return self.list_files_paginated(
+                folder_id,
+                path,
+                min_stable_seconds=min_stable_seconds,
+                subdir=subdir,
+                scope=scope,
+                file_type=file_type,
+                status=status,
+                search=search,
+                page=safe_page,
+                page_size=page_size,
+            )
+        pagination = FileListPagination(
+            page=safe_page,
+            page_size=page_size,
+            total_pages=total_pages,
+            total_items=total_items,
+            start=(start_index + 1) if total_items else 0,
+            end=min(end_index, total_items),
+        )
+        return page_entries, stats, pagination, total_in_scope
 
     def filter_files(
         self,
@@ -186,6 +453,45 @@ class FolderScanner:
             for key in sorted(mapping)
         ]
 
+    def build_directory_tree_for_root(self, path: str) -> list[FileTreeNode]:
+        root = Path(path)
+        cache_key = str(root.resolve()) if root.exists() else str(root)
+        now = time.time()
+        cached = self._directory_tree_cache.get(cache_key)
+        if cached and (now - cached.cached_at) <= self.DIRECTORY_TREE_CACHE_SECONDS:
+            return [item.model_copy() for item in cached.nodes]
+        if not root.exists():
+            return []
+        mapping: dict[str, FileTreeNode] = {}
+        for current_dir, dir_names, _ in os.walk(root):
+            dir_names.sort(key=str.casefold)
+            current_path = Path(current_dir)
+            if current_path == root:
+                parent_relative = ""
+            else:
+                parent_relative = str(current_path.relative_to(root)).replace("\\", "/")
+            for dir_name in dir_names:
+                child_relative = f"{parent_relative}/{dir_name}" if parent_relative else dir_name
+                mapping[child_relative] = FileTreeNode(
+                    path=child_relative,
+                    name=dir_name,
+                    count=0,
+                    depth=child_relative.count("/"),
+                    parent=parent_relative,
+                    children=[],
+                )
+                if parent_relative and child_relative not in mapping[parent_relative].children:
+                    mapping[parent_relative].children.append(child_relative)
+        nodes = [
+            mapping[key].model_copy(update={"children": sorted(mapping[key].children)})
+            for key in sorted(mapping)
+        ]
+        self._directory_tree_cache[cache_key] = DirectoryTreeCacheEntry(
+            cached_at=now,
+            nodes=[item.model_copy() for item in nodes],
+        )
+        return [item.model_copy() for item in nodes]
+
     def summarize_files(self, entries: list[FileEntry]) -> FileListStats:
         return FileListStats(
             total=len(entries),
@@ -255,7 +561,9 @@ class FolderScanner:
     def invalidate_file_list_cache(self, folder_id: str | None = None) -> None:
         if folder_id is None:
             self._file_list_cache.clear()
+            self._directory_tree_cache.clear()
             return
         stale_keys = [key for key in self._file_list_cache if key[0] == folder_id]
         for key in stale_keys:
             self._file_list_cache.pop(key, None)
+        self._directory_tree_cache.clear()
