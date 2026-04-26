@@ -5,6 +5,7 @@ import difflib
 import re
 import shutil
 import time
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -32,6 +33,8 @@ from .telegram_client import TelegramSessionManager
 from .upload_engine import UploadEngineClient
 from .upload_repo import UploadRepository
 from .video_splitter import VideoSplitter
+
+logger = logging.getLogger(__name__)
 
 
 class UploadManager:
@@ -72,6 +75,7 @@ class UploadManager:
         self._manual_task_ids: set[str] = set()
         self._locked_retry_tasks: dict[str, asyncio.Task] = {}
         self._scan_subdir_cursors: dict[str, int] = {}
+        self._scan_jobs_inflight: set[str] = set()
 
     async def start(self) -> None:
         self.video_splitter.cleanup_orphans(self.upload_repo.list_task_ids())
@@ -183,7 +187,21 @@ class UploadManager:
         if folder_id:
             folders = [item for item in folders if item.id == folder_id]
         for folder in folders:
-            await self._scan_folder(folder)
+            if folder.id in self._scan_jobs_inflight:
+                logger.info("trigger_scan skipped_inflight folder_id=%s name=%s", folder.id, folder.name)
+                continue
+            self._scan_jobs_inflight.add(folder.id)
+            try:
+                started_at = time.perf_counter()
+                logger.info("trigger_scan started folder_id=%s name=%s", folder.id, folder.name)
+                await self._scan_folder(folder)
+                elapsed_ms = (time.perf_counter() - started_at) * 1000
+                logger.info("trigger_scan finished folder_id=%s name=%s elapsed_ms=%.1f", folder.id, folder.name, elapsed_ms)
+            except Exception:
+                logger.exception("trigger_scan failed folder_id=%s name=%s", folder.id, folder.name)
+                raise
+            finally:
+                self._scan_jobs_inflight.discard(folder.id)
 
     async def retry_task(self, task_id: str) -> UploadTask:
         task = self.upload_repo.get_task(task_id)

@@ -5,6 +5,7 @@ from functools import lru_cache
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import asyncio
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -639,12 +640,14 @@ async def folder_files(
     status: str = Query(default="all"),
     search: str = Query(default=""),
 ):
+    request_started_at = asyncio.get_event_loop().time()
     folder = next(
         (item for item in settings_service.settings.folders if item.id == folder_id),
         None,
     )
     if not folder:
         raise HTTPException(status_code=404, detail="folder not found")
+    locate_done_at = asyncio.get_event_loop().time()
     items, stats, pagination, total_all = scanner.list_files_paginated(
         folder.id,
         folder.path,
@@ -657,9 +660,27 @@ async def folder_files(
         page=page,
         page_size=page_size,
     )
+    list_done_at = asyncio.get_event_loop().time()
+    tree = scanner.build_directory_tree_for_view(folder.path, subdir)
+    tree_done_at = asyncio.get_event_loop().time()
+    logger.info(
+        "folder_files folder_id=%s subdir=%s scope=%s page=%s page_size=%s locate_ms=%.1f list_ms=%.1f tree_ms=%.1f total_ms=%.1f items=%s total_all=%s tree_nodes=%s",
+        folder_id,
+        subdir,
+        scope,
+        page,
+        page_size,
+        (locate_done_at - request_started_at) * 1000,
+        (list_done_at - locate_done_at) * 1000,
+        (tree_done_at - list_done_at) * 1000,
+        (tree_done_at - request_started_at) * 1000,
+        len(items),
+        total_all,
+        len(tree),
+    )
     return FileListResponse(
         items=items,
-        tree=scanner.build_directory_tree_for_root(folder.path),
+        tree=tree,
         stats=stats,
         pagination=pagination,
         total_all=total_all,
@@ -669,8 +690,9 @@ async def folder_files(
 @app.post("/api/folders/{folder_id}/scan")
 async def scan_folder(folder_id: str):
     scanner.invalidate_file_list_cache(folder_id)
-    await upload_manager.trigger_scan(folder_id)
-    return {"ok": True}
+    logger.info("scan_folder queued folder_id=%s", folder_id)
+    asyncio.create_task(upload_manager.trigger_scan(folder_id))
+    return {"ok": True, "queued": True}
 
 
 @app.post("/api/uploads/manual")

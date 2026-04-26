@@ -127,6 +127,7 @@ class FolderScanner:
         root = Path(path)
         if not root.exists():
             return [], 0, 0
+        db_available = self.upload_repo.db_available_for_file_ops()
         excluded = {
             item.strip().replace("\\", "/").strip("/")
             for item in (excluded_subdirs or [])
@@ -158,8 +159,12 @@ class FolderScanner:
         def build_entry(file_path: Path) -> FileEntry:
             stat = file_path.stat()
             relative = str(file_path.relative_to(root)).replace("\\", "/")
-            uploaded = self.upload_repo.is_uploaded(
-                folder_id, relative, stat.st_size, stat.st_mtime
+            uploaded = (
+                self.upload_repo.is_uploaded(
+                    folder_id, relative, stat.st_size, stat.st_mtime
+                )
+                if db_available
+                else False
             )
             locked = False if uploaded else self.is_file_unavailable(
                 folder_id, path, file_path, min_stable_seconds
@@ -220,6 +225,7 @@ class FolderScanner:
                 end=0,
             )
             return [], FileListStats(), empty_pagination, 0
+        db_available = self.upload_repo.db_available_for_file_ops()
 
         normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
         normalized_scope = scope if scope in {"direct", "recursive"} else "direct"
@@ -229,20 +235,21 @@ class FolderScanner:
         page_size = page_size if page_size in {10, 20, 50, 100} else 10
         page = max(1, page)
 
-        indexed_items, indexed_stats, indexed_pagination, indexed_total_all, _ = (
-            self.upload_repo.query_file_index(
-                folder_id=folder_id,
-                subdir=subdir,
-                scope=scope,
-                file_type=file_type,
-                status=status,
-                search=search,
-                page=page,
-                page_size=page_size,
+        if db_available:
+            indexed_items, indexed_stats, indexed_pagination, indexed_total_all, _ = (
+                self.upload_repo.query_file_index(
+                    folder_id=folder_id,
+                    subdir=subdir,
+                    scope=scope,
+                    file_type=file_type,
+                    status=status,
+                    search=search,
+                    page=page,
+                    page_size=page_size,
+                )
             )
-        )
-        if indexed_total_all > 0:
-            return indexed_items, indexed_stats, indexed_pagination, indexed_total_all
+            if indexed_total_all > 0:
+                return indexed_items, indexed_stats, indexed_pagination, indexed_total_all
 
         target_dir = root / normalized_subdir if normalized_subdir else root
         try:
@@ -286,8 +293,12 @@ class FolderScanner:
         def build_entry(file_path: Path) -> FileEntry:
             stat = file_path.stat()
             relative = str(file_path.relative_to(root)).replace("\\", "/")
-            uploaded = self.upload_repo.is_uploaded(
-                folder_id, relative, stat.st_size, stat.st_mtime
+            uploaded = (
+                self.upload_repo.is_uploaded(
+                    folder_id, relative, stat.st_size, stat.st_mtime
+                )
+                if db_available
+                else False
             )
             locked = False if uploaded else self.is_file_unavailable(
                 folder_id, path, file_path, min_stable_seconds
@@ -322,6 +333,7 @@ class FolderScanner:
         total_items = 0
         stats = FileListStats()
         page_entries: list[FileEntry] = []
+        index_entries: list[FileEntry] = []
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
         active_keys: set[tuple[str, str]] = set()
@@ -329,7 +341,7 @@ class FolderScanner:
             entry = build_entry(file_path)
             active_keys.add((folder_id, entry.relative_path))
             if normalized_scope == "direct":
-                self.upload_repo.upsert_file_index_entries(folder_id, [entry])
+                index_entries.append(entry)
             total_in_scope += 1
             if not matches(entry):
                 continue
@@ -347,6 +359,8 @@ class FolderScanner:
             if start_index <= (total_items - 1) < end_index:
                 page_entries.append(entry)
 
+        if db_available and index_entries:
+            self.upload_repo.upsert_file_index_entries(folder_id, index_entries)
         self._prune_stability_snapshots(folder_id, active_keys)
         total_pages = max(1, (total_items + page_size - 1) // page_size)
         safe_page = min(max(1, page), total_pages)
@@ -491,6 +505,68 @@ class FolderScanner:
             nodes=[item.model_copy() for item in nodes],
         )
         return [item.model_copy() for item in nodes]
+
+    def build_directory_tree_for_view(
+        self,
+        path: str,
+        subdir: str = "",
+    ) -> list[FileTreeNode]:
+        root = Path(path)
+        if not root.exists() or not root.is_dir():
+            return []
+
+        normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        focus_parts = [part for part in normalized_subdir.split("/") if part] if normalized_subdir else []
+        prefixes = []
+        current = ""
+        for part in focus_parts:
+            current = f"{current}/{part}" if current else part
+            prefixes.append(current)
+
+        nodes: dict[str, FileTreeNode] = {}
+
+        def ensure_node(relative_path: str) -> None:
+            relative_path = str(relative_path or "").replace("\\", "/").strip("/")
+            if not relative_path:
+                return
+            parts = relative_path.split("/")
+            name = parts[-1]
+            parent = "/".join(parts[:-1])
+            if relative_path not in nodes:
+                nodes[relative_path] = FileTreeNode(
+                    path=relative_path,
+                    name=name,
+                    count=0,
+                    depth=relative_path.count("/"),
+                    parent=parent,
+                    children=[],
+                )
+            if parent:
+                ensure_node(parent)
+                if relative_path not in nodes[parent].children:
+                    nodes[parent].children.append(relative_path)
+
+        def list_child_dirs(base_relative: str = "") -> None:
+            base_dir = root / base_relative if base_relative else root
+            try:
+                entries = sorted(base_dir.iterdir(), key=lambda p: p.name.casefold())
+            except Exception:
+                return
+            for item in entries:
+                if not item.is_dir():
+                    continue
+                child_relative = f"{base_relative}/{item.name}" if base_relative else item.name
+                ensure_node(child_relative)
+
+        list_child_dirs("")
+        for prefix in prefixes:
+            ensure_node(prefix)
+            list_child_dirs(prefix)
+
+        return [
+            nodes[key].model_copy(update={"children": sorted(nodes[key].children)})
+            for key in sorted(nodes)
+        ]
 
     def summarize_files(self, entries: list[FileEntry]) -> FileListStats:
         return FileListStats(

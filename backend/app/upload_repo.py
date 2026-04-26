@@ -42,10 +42,13 @@ class UploadRepository:
         cached = self._task_list_cache
         if cached and (now - cached.cached_at) <= self.TASK_LIST_CACHE_SECONDS:
             return [item.model_copy() for item in cached.tasks]
-        with get_connection() as connection:
-            rows = connection.execute(
-                "SELECT * FROM uploads ORDER BY updated_at DESC, created_at DESC"
-            ).fetchall()
+        try:
+            with get_connection() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM uploads ORDER BY updated_at DESC, created_at DESC"
+                ).fetchall()
+        except sqlite3.Error:
+            return []
         tasks = [self._decode_task(row) for row in rows]
         self._task_list_cache = UploadListCacheEntry(
             cached_at=now,
@@ -264,11 +267,14 @@ class UploadRepository:
     def get_scan_cursor(self, folder_id: str) -> int:
         if not folder_id:
             return 0
-        with get_connection() as connection:
-            row = connection.execute(
-                "SELECT subdir_cursor FROM scan_state WHERE folder_id = ?",
-                (folder_id,),
-            ).fetchone()
+        try:
+            with get_connection() as connection:
+                row = connection.execute(
+                    "SELECT subdir_cursor FROM scan_state WHERE folder_id = ?",
+                    (folder_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            return 0
         if not row:
             return 0
         try:
@@ -280,18 +286,29 @@ class UploadRepository:
         if not folder_id:
             return
         normalized_cursor = max(0, int(cursor or 0))
-        with get_connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO scan_state (folder_id, subdir_cursor, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(folder_id) DO UPDATE SET
-                    subdir_cursor = excluded.subdir_cursor,
-                    updated_at = excluded.updated_at
-                """,
-                (folder_id, normalized_cursor, time.time()),
-            )
-            connection.commit()
+        try:
+            with get_connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO scan_state (folder_id, subdir_cursor, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(folder_id) DO UPDATE SET
+                        subdir_cursor = excluded.subdir_cursor,
+                        updated_at = excluded.updated_at
+                    """,
+                    (folder_id, normalized_cursor, time.time()),
+                )
+                connection.commit()
+        except sqlite3.Error:
+            return
+
+    def db_available_for_file_ops(self) -> bool:
+        try:
+            with get_connection() as connection:
+                connection.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
 
     def upsert_file_index_entries(
         self,
