@@ -20,6 +20,7 @@ import {
   fillBotApiAccountForm,
   fillChannelForm,
   fillFolderForm,
+  applyBotApiSettings,
   loadSettings,
   resetChannelForm,
   resetBotApiAccountForm,
@@ -736,11 +737,10 @@ function wireEvents() {
       resetBotApiAccountForm();
       closeDialog("bot-api-dialog");
       setSettingsFormDirty("botApi", false);
-      await loadSettings();
+      applyBotApiSettings(savedAccount);
       resultNode.textContent = "保存成功，可点击“测试”验证连接";
       pushToast(accountId ? "Bot API 账号已更新" : "Bot API 账号已创建", "success");
     } catch (error) {
-      await loadSettings();
       resultNode.textContent = `保存失败：${error.message}`;
       pushToast(`Bot API 保存失败：${error.message}`, "error");
     }

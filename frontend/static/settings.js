@@ -43,6 +43,41 @@ function renderLoginMeta(login) {
   }
 }
 
+function renderBotApiSettingsSection(settings, { hydrateForm = true } = {}) {
+  const accounts = settings.bot_api_accounts || [];
+  const dispatchMode = settings.bot_dispatch_mode || "single";
+  if (hydrateForm) {
+    document.getElementById("bot-dispatch-mode").value = dispatchMode;
+    const defaultBotOptions = `<option value="">请选择默认 Bot</option>${accounts
+      .map((account) => `<option value="${account.id}">${escapeHtml(account.name)}</option>`)
+      .join("")}`;
+    if (defaultBotOptions !== settingsMarkupCache.defaultBotOptions) {
+      setHtmlIfChanged("default-bot-api-account", defaultBotOptions);
+      settingsMarkupCache.defaultBotOptions = defaultBotOptions;
+    }
+    document.getElementById("default-bot-api-account").value = settings.default_bot_api_account_id || "";
+    document.getElementById("smart-queue-scheduling-enabled").checked = !!settings.smart_queue_scheduling_enabled;
+    resetBotApiAccountForm(false);
+    renderBotApiAccountList(accounts);
+    syncBotDispatchControls();
+  } else {
+    renderBotApiAccountList(accounts);
+    syncBotDispatchControls();
+  }
+
+  const botOptions = `<option value="">未绑定 / 由默认策略决定</option>${accounts
+    .map((account) => `<option value="${account.id}">${escapeHtml(account.name)}${account.enabled ? "" : "（已停用）"}</option>`)
+    .join("")}`;
+  if (botOptions !== settingsMarkupCache.channelBotOptions) {
+    setHtmlIfChanged("channel-bot-api-account", botOptions);
+    settingsMarkupCache.channelBotOptions = botOptions;
+  }
+
+  if (shouldHydrateSettingsForm("channel")) {
+    document.getElementById("channel-bot-api-account").value = "";
+  }
+}
+
 export async function submitJson(url, payload, method = "POST") {
   return api(url, { method, body: JSON.stringify(payload) });
 }
@@ -217,6 +252,19 @@ export async function loadSettings() {
   }
 }
 
+export function applyBotApiSettings(payload = {}) {
+  if (!state.settings) return;
+  state.settings.bot_api_accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  state.settings.bot_api_runtime_status = payload.bot_api_runtime_status || { items: [] };
+  state.settings.bot_dispatch_mode = payload.bot_dispatch_mode || state.settings.bot_dispatch_mode || "single";
+  state.settings.default_bot_api_account_id = payload.default_bot_api_account_id ?? state.settings.default_bot_api_account_id ?? "";
+  state.settings.smart_queue_scheduling_enabled = payload.smart_queue_scheduling_enabled ?? state.settings.smart_queue_scheduling_enabled ?? false;
+  renderBotApiSettingsSection(state.settings, {
+    hydrateForm: shouldHydrateSettingsForm("botApi"),
+  });
+  window.dispatchEvent(new CustomEvent("layout:topbar-sync"));
+}
+
 export function renderSettings() {
   if (state.ui.loading.settings && !state.settings) {
     setText("login-stage", "加载中");
@@ -258,36 +306,9 @@ export function renderSettings() {
   }
 
   if (shouldHydrateSettingsForm("botApi")) {
-    const accounts = settings.bot_api_accounts || [];
-    const dispatchMode = settings.bot_dispatch_mode || "single";
-    document.getElementById("bot-dispatch-mode").value = dispatchMode;
-    const defaultBotOptions = `<option value="">请选择默认 Bot</option>${accounts
-      .map((account) => `<option value="${account.id}">${escapeHtml(account.name)}</option>`)
-      .join("")}`;
-    if (defaultBotOptions !== settingsMarkupCache.defaultBotOptions) {
-      setHtmlIfChanged("default-bot-api-account", defaultBotOptions);
-      settingsMarkupCache.defaultBotOptions = defaultBotOptions;
-    }
-    document.getElementById("default-bot-api-account").value = settings.default_bot_api_account_id || "";
-    document.getElementById("smart-queue-scheduling-enabled").checked = !!settings.smart_queue_scheduling_enabled;
-    resetBotApiAccountForm(false);
-    renderBotApiAccountList(accounts);
-    syncBotDispatchControls();
+    renderBotApiSettingsSection(settings, { hydrateForm: true });
   } else {
-    renderBotApiAccountList(settings.bot_api_accounts || []);
-    syncBotDispatchControls();
-  }
-
-  const botOptions = `<option value="">未绑定 / 由默认策略决定</option>${(settings.bot_api_accounts || [])
-    .map((account) => `<option value="${account.id}">${escapeHtml(account.name)}${account.enabled ? "" : "（已停用）"}</option>`)
-    .join("")}`;
-  if (botOptions !== settingsMarkupCache.channelBotOptions) {
-    setHtmlIfChanged("channel-bot-api-account", botOptions);
-    settingsMarkupCache.channelBotOptions = botOptions;
-  }
-
-  if (shouldHydrateSettingsForm("channel")) {
-    document.getElementById("channel-bot-api-account").value = "";
+    renderBotApiSettingsSection(settings, { hydrateForm: false });
   }
 
   syncFolderUploadLimitControls();

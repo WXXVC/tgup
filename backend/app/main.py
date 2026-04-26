@@ -204,6 +204,17 @@ async def get_settings():
     }
 
 
+def build_bot_api_settings_payload() -> dict:
+    settings_payload = settings_service.public_settings()
+    return {
+        "accounts": settings_payload.get("bot_api_accounts", []),
+        "bot_api_runtime_status": bot_api_pool.status(),
+        "bot_dispatch_mode": settings_payload.get("bot_dispatch_mode", "single"),
+        "default_bot_api_account_id": settings_payload.get("default_bot_api_account_id", ""),
+        "smart_queue_scheduling_enabled": settings_payload.get("smart_queue_scheduling_enabled", False),
+    }
+
+
 @app.get("/api/access/status")
 async def access_status(request: Request):
     return {
@@ -311,7 +322,10 @@ async def create_bot_api_account(payload: BotApiAccountPayload):
         await upload_manager.apply_runtime_settings()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return account
+    return {
+        "account": account,
+        **build_bot_api_settings_payload(),
+    }
 
 
 @app.put("/api/settings/bot-api/accounts/{account_id}")
@@ -329,7 +343,10 @@ async def update_bot_api_account(account_id: str, payload: BotApiAccountPayload)
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return account
+    return {
+        "account": account,
+        **build_bot_api_settings_payload(),
+    }
 
 
 @app.delete("/api/settings/bot-api/accounts/{account_id}")
@@ -345,7 +362,7 @@ async def delete_bot_api_account(account_id: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="bot api account not found")
-    return {"ok": True}
+    return {"ok": True, **build_bot_api_settings_payload()}
 
 
 @app.post("/api/settings/bot-api/accounts/{account_id}/test")
