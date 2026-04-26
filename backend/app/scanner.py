@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .file_utils import build_caption, classify_file, derive_status, file_is_locked
-from .models import FileEntry
+from .models import FileEntry, FileListPagination, FileListStats, FileTreeNode
 from .upload_repo import UploadRepository
 
 
@@ -16,12 +16,27 @@ class FileStabilitySnapshot:
     first_seen_at: float
 
 
+@dataclass
+class FileListCacheEntry:
+    cached_at: float
+    entries: list[FileEntry]
+
+
 class FolderScanner:
+    FILE_LIST_CACHE_SECONDS = 1.5
+
     def __init__(self, upload_repo: UploadRepository) -> None:
         self.upload_repo = upload_repo
         self._stability_snapshots: dict[tuple[str, str], FileStabilitySnapshot] = {}
+        self._file_list_cache: dict[tuple[str, str, int], FileListCacheEntry] = {}
 
     def list_files(self, folder_id: str, path: str, min_stable_seconds: int = 0) -> list[FileEntry]:
+        cache_key = (folder_id, str(Path(path)), int(min_stable_seconds or 0))
+        now = time.time()
+        cached = self._file_list_cache.get(cache_key)
+        if cached and (now - cached.cached_at) <= self.FILE_LIST_CACHE_SECONDS:
+            return [item.model_copy() for item in cached.entries]
+
         root = Path(path)
         if not root.exists():
             return []
@@ -44,7 +59,12 @@ class FolderScanner:
                 )
             )
         self._prune_stability_snapshots(folder_id, active_keys)
-        return entries
+        copied_entries = [item.model_copy() for item in entries]
+        self._file_list_cache[cache_key] = FileListCacheEntry(
+            cached_at=now,
+            entries=copied_entries,
+        )
+        return [item.model_copy() for item in copied_entries]
 
     def list_scannable_files(
         self,
@@ -87,6 +107,114 @@ class FolderScanner:
     def build_caption(self, folder_path: str, absolute_path: str) -> str:
         return build_caption(Path(folder_path), Path(absolute_path))
 
+    def filter_files(
+        self,
+        entries: list[FileEntry],
+        *,
+        subdir: str = "",
+        scope: str = "direct",
+        file_type: str = "all",
+        status: str = "all",
+        search: str = "",
+    ) -> list[FileEntry]:
+        normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        normalized_scope = scope if scope in {"direct", "recursive"} else "direct"
+        normalized_type = str(file_type or "all").strip().lower()
+        normalized_status = str(status or "all").strip().lower()
+        normalized_search = str(search or "").strip().lower()
+
+        def matches(entry: FileEntry) -> bool:
+            file_dir = (
+                entry.relative_path.split("/")[:-1]
+                and "/".join(entry.relative_path.split("/")[:-1])
+            ) or ""
+            if normalized_subdir:
+                prefix = f"{normalized_subdir}/"
+                if normalized_scope == "direct":
+                    if file_dir != normalized_subdir:
+                        return False
+                elif not (
+                    entry.relative_path == normalized_subdir
+                    or entry.relative_path.startswith(prefix)
+                ):
+                    return False
+            elif normalized_scope == "direct" and file_dir:
+                return False
+            entry_type = (
+                entry.file_type.value if hasattr(entry.file_type, "value") else str(entry.file_type)
+            ).lower()
+            if normalized_type != "all" and entry_type != normalized_type:
+                return False
+            entry_status = (
+                entry.status.value if hasattr(entry.status, "value") else str(entry.status)
+            ).lower()
+            if normalized_status != "all" and entry_status != normalized_status:
+                return False
+            if normalized_search:
+                haystack = f"{entry.relative_path} {entry.absolute_path}".lower()
+                if normalized_search not in haystack:
+                    return False
+            return True
+
+        return [entry for entry in entries if matches(entry)]
+
+    def build_directory_tree(self, entries: list[FileEntry]) -> list[FileTreeNode]:
+        mapping: dict[str, FileTreeNode] = {}
+        for entry in entries:
+            parts = entry.relative_path.split("/")[:-1]
+            current = ""
+            parent = ""
+            for part in parts:
+                current = f"{current}/{part}" if current else part
+                if current not in mapping:
+                    mapping[current] = FileTreeNode(
+                        path=current,
+                        name=part,
+                        count=0,
+                        depth=current.count("/"),
+                        parent=parent,
+                        children=[],
+                    )
+                mapping[current].count += 1
+                if parent and current not in mapping[parent].children:
+                    mapping[parent].children.append(current)
+                parent = current
+        return [
+            mapping[key].model_copy(
+                update={"children": sorted(mapping[key].children)}
+            )
+            for key in sorted(mapping)
+        ]
+
+    def summarize_files(self, entries: list[FileEntry]) -> FileListStats:
+        return FileListStats(
+            total=len(entries),
+            pending=sum(1 for item in entries if str(item.status) == "UploadStatus.PENDING" or getattr(item.status, "value", "") == "pending"),
+            uploaded=sum(1 for item in entries if str(item.status) == "UploadStatus.UPLOADED" or getattr(item.status, "value", "") == "uploaded"),
+            locked=sum(1 for item in entries if str(item.status) == "UploadStatus.LOCKED" or getattr(item.status, "value", "") == "locked"),
+        )
+
+    def paginate_files(
+        self, entries: list[FileEntry], *, page: int = 1, page_size: int = 10
+    ) -> tuple[list[FileEntry], FileListPagination]:
+        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        total_items = len(entries)
+        total_pages = max(1, (total_items + page_size - 1) // page_size)
+        page = min(max(1, page), total_pages)
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        return (
+            entries[start_index:end_index],
+            FileListPagination(
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                total_items=total_items,
+                start=(start_index + 1) if total_items else 0,
+                end=min(end_index, total_items),
+            ),
+        )
+
     def is_file_unavailable(self, folder_id: str, folder_path: str, file_path: Path, min_stable_seconds: int = 0) -> bool:
         if file_is_locked(file_path):
             return True
@@ -123,3 +251,11 @@ class FolderScanner:
         ]
         for key in stale_keys:
             self._stability_snapshots.pop(key, None)
+
+    def invalidate_file_list_cache(self, folder_id: str | None = None) -> None:
+        if folder_id is None:
+            self._file_list_cache.clear()
+            return
+        stale_keys = [key for key in self._file_list_cache if key[0] == folder_id]
+        for key in stale_keys:
+            self._file_list_cache.pop(key, None)

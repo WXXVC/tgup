@@ -34,11 +34,52 @@ class ApiSettings(BaseModel):
     phone_number: str = ""
 
 
+class ProxyType(str, Enum):
+    HTTP = "http"
+    SOCKS5 = "socks5"
+
+
+class UploadEngine(str, Enum):
+    TELETHON = "telethon"
+    BOT_API = "bot_api"
+
+
+class BotDispatchMode(str, Enum):
+    SINGLE = "single"
+    CHANNEL_BOUND = "channel_bound"
+    ROUND_ROBIN = "round_robin"
+
+
+class ProxySettings(BaseModel):
+    enabled: bool = False
+    type: ProxyType = ProxyType.HTTP
+    host: str = ""
+    port: int = Field(default=1080, ge=1, le=65535)
+    username: str = ""
+    password: str = ""
+
+
+class BotApiAccount(BaseModel):
+    id: str
+    name: str
+    server_url: str = "https://api.telegram.org"
+    bot_token: str = ""
+    enabled: bool = True
+    send_rate_limit_per_minute: int = Field(default=20, ge=1, le=600)
+    send_rate_limit_per_channel_per_minute: int = Field(default=10, ge=1, le=600)
+    send_jitter_min_ms: int = Field(default=300, ge=0, le=10000)
+    send_jitter_max_ms: int = Field(default=1200, ge=0, le=10000)
+    auto_slowdown_enabled: bool = True
+    auto_slowdown_factor_percent: int = Field(default=50, ge=10, le=100)
+    auto_slowdown_duration_seconds: int = Field(default=600, ge=30, le=86400)
+
+
 class ChannelConfig(BaseModel):
     id: str
     name: str
     target: str
     enabled: bool = True
+    bot_api_account_id: str = ""
 
 
 class FolderConfig(BaseModel):
@@ -61,19 +102,56 @@ class FolderConfig(BaseModel):
     enabled: bool = True
 
 
-class AppSettings(BaseModel):
-    api: ApiSettings = Field(default_factory=ApiSettings)
-    channels: list[ChannelConfig] = Field(default_factory=list)
-    folders: list[FolderConfig] = Field(default_factory=list)
-    upload_workers: int = Field(default=1, ge=1, le=4)
-    access_password_hash: str = ""
-
-
 class LoginStartRequest(BaseModel):
     api_id: int | None = None
     api_hash: str = ""
     phone_number: str = ""
-    upload_workers: int | None = Field(default=None, ge=1, le=4)
+
+
+class ProxySettingsPayload(BaseModel):
+    enabled: bool = False
+    type: ProxyType = ProxyType.HTTP
+    host: str = ""
+    port: int = Field(default=1080, ge=1, le=65535)
+    username: str = ""
+    password: str = ""
+
+
+class UploadEnginePayload(BaseModel):
+    engine: UploadEngine = UploadEngine.TELETHON
+
+
+class BotApiAccountPayload(BaseModel):
+    name: str = ""
+    server_url: str = "https://api.telegram.org"
+    bot_token: str = ""
+    enabled: bool = True
+    send_rate_limit_per_minute: int = Field(default=20, ge=1, le=600)
+    send_rate_limit_per_channel_per_minute: int = Field(default=10, ge=1, le=600)
+    send_jitter_min_ms: int = Field(default=300, ge=0, le=10000)
+    send_jitter_max_ms: int = Field(default=1200, ge=0, le=10000)
+    auto_slowdown_enabled: bool = True
+    auto_slowdown_factor_percent: int = Field(default=50, ge=10, le=100)
+    auto_slowdown_duration_seconds: int = Field(default=600, ge=30, le=86400)
+
+
+class BotDispatchSettingsPayload(BaseModel):
+    mode: BotDispatchMode = BotDispatchMode.SINGLE
+    default_bot_api_account_id: str = ""
+    smart_queue_scheduling_enabled: bool = False
+
+
+class AppSettings(BaseModel):
+    api: ApiSettings = Field(default_factory=ApiSettings)
+    proxy: ProxySettings = Field(default_factory=ProxySettings)
+    upload_engine: UploadEngine = UploadEngine.TELETHON
+    bot_api_accounts: list[BotApiAccount] = Field(default_factory=list)
+    bot_dispatch_mode: BotDispatchMode = BotDispatchMode.SINGLE
+    default_bot_api_account_id: str = ""
+    smart_queue_scheduling_enabled: bool = False
+    channels: list[ChannelConfig] = Field(default_factory=list)
+    folders: list[FolderConfig] = Field(default_factory=list)
+    access_password_hash: str = ""
 
 
 class LoginCodeRequest(BaseModel):
@@ -88,10 +166,16 @@ class AccessPasswordRequest(BaseModel):
     password: str
 
 
+class ChannelBotSetupRequest(BaseModel):
+    bot_api_account_id: str = ""
+    admin_title: str = "Uploader Bot"
+
+
 class ChannelPayload(BaseModel):
     name: str
     target: str
     enabled: bool = True
+    bot_api_account_id: str = ""
 
 
 class FolderPayload(BaseModel):
@@ -122,6 +206,39 @@ class FileEntry(BaseModel):
     status: UploadStatus
 
 
+class FileTreeNode(BaseModel):
+    path: str
+    name: str
+    count: int
+    depth: int
+    parent: str
+    children: list[str] = Field(default_factory=list)
+
+
+class FileListStats(BaseModel):
+    total: int = 0
+    pending: int = 0
+    uploaded: int = 0
+    locked: int = 0
+
+
+class FileListPagination(BaseModel):
+    page: int = 1
+    page_size: int = 10
+    total_pages: int = 1
+    total_items: int = 0
+    start: int = 0
+    end: int = 0
+
+
+class FileListResponse(BaseModel):
+    items: list[FileEntry] = Field(default_factory=list)
+    tree: list[FileTreeNode] = Field(default_factory=list)
+    stats: FileListStats = Field(default_factory=FileListStats)
+    pagination: FileListPagination = Field(default_factory=FileListPagination)
+    total_all: int = 0
+
+
 class UploadBatchItem(BaseModel):
     relative_path: str
     status: UploadStatus = UploadStatus.PENDING
@@ -133,6 +250,8 @@ class UploadTask(BaseModel):
     id: str
     folder_id: str
     channel_id: str
+    bot_api_account_id: str = ""
+    uploader_engine: str = ""
     relative_path: str
     absolute_path: str
     source_relative_path: str = ""
@@ -171,3 +290,18 @@ class UploadStats(BaseModel):
     failed: int = 0
     locked: int = 0
     upload_speed_bytes: float = 0.0
+
+
+class UploadListPagination(BaseModel):
+    page: int = 1
+    page_size: int = 10
+    total_pages: int = 1
+    total_items: int = 0
+    start: int = 0
+    end: int = 0
+
+
+class UploadListResponse(BaseModel):
+    items: list[UploadTask] = Field(default_factory=list)
+    pagination: UploadListPagination = Field(default_factory=UploadListPagination)
+    total_all: int = 0

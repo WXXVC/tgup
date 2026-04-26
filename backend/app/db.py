@@ -14,6 +14,8 @@ def init_db() -> None:
                 id TEXT PRIMARY KEY,
                 folder_id TEXT NOT NULL,
                 channel_id TEXT NOT NULL,
+                bot_api_account_id TEXT NOT NULL DEFAULT '',
+                uploader_engine TEXT NOT NULL DEFAULT '',
                 relative_path TEXT NOT NULL,
                 absolute_path TEXT NOT NULL,
                 source_relative_path TEXT NOT NULL DEFAULT '',
@@ -64,6 +66,14 @@ def init_db() -> None:
         if "group_debug" not in columns:
             connection.execute(
                 "ALTER TABLE uploads ADD COLUMN group_debug TEXT NOT NULL DEFAULT ''"
+            )
+        if "bot_api_account_id" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN bot_api_account_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "uploader_engine" not in columns:
+            connection.execute(
+                "ALTER TABLE uploads ADD COLUMN uploader_engine TEXT NOT NULL DEFAULT ''"
             )
         connection.execute(
             """

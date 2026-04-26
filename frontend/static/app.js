@@ -1,5 +1,5 @@
 ﻿import { state } from "./store.js";
-import { api, debounce, pushToast, setGlobalBanner, setText } from "./utils.js";
+import { api, debounce, escapeHtml, pushToast, setGlobalBanner, setText } from "./utils.js";
 import {
   closePreview,
   clearFileSelection,
@@ -11,19 +11,25 @@ import {
   selectSubdir,
   setPreviewSize,
   selectVisibleFiles,
+  syncVisibleFileSelectionUI,
   stepPreview,
   syncPreviewOnDialogClose,
   toggleDirectoryCollapse,
 } from "./files.js";
 import {
+  fillBotApiAccountForm,
   fillChannelForm,
   fillFolderForm,
   loadSettings,
   resetChannelForm,
+  resetBotApiAccountForm,
   resetFolderForm,
   setSettingsFormDirty,
   submitJson,
+  syncBotDispatchControls,
+  syncProxyControls,
   syncFolderMediaGroupControls,
+  syncFolderUploadLimitControls,
 } from "./settings.js";
 import {
   clearTaskSelection,
@@ -39,10 +45,12 @@ import {
   selectVisibleTasks,
   showTaskDetail,
   syncUploadProgress,
+  syncVisibleTaskSelectionUI,
   toggleTaskGroup,
 } from "./uploads.js";
 
 let refreshTimer = null;
+let uploadSyncInFlight = false;
 const UPLOAD_POLL_INTERVAL_MS = 2500;
 
 const TAB_ROUTE_MAP = {
@@ -138,6 +146,115 @@ function setBrowserSidebarCollapsed(collapsed) {
   });
 }
 
+function openDialog(id) {
+  const dialog = document.getElementById(id);
+  if (dialog && !dialog.open) {
+    dialog.showModal();
+  }
+}
+
+function closeDialog(id) {
+  const dialog = document.getElementById(id);
+  if (dialog?.open) {
+    dialog.close();
+  }
+}
+
+function showBotSetupResultDialog({ title, summary, results = [] }) {
+  const titleNode = document.getElementById("bot-setup-result-title");
+  const summaryNode = document.getElementById("bot-setup-result-summary");
+  const bodyNode = document.getElementById("bot-setup-result-body");
+  if (!titleNode || !summaryNode || !bodyNode) return;
+  titleNode.textContent = title || "Bot 接入结果";
+  summaryNode.textContent = summary || "";
+  bodyNode.innerHTML = results.length
+    ? results.map((item) => `
+      <article class="detail-subtask-item ${item.ok ? "detail-subtask-item-uploaded" : "detail-subtask-item-failed"}">
+        <div class="detail-subtask-head">
+          <strong>${escapeHtml(item.bot_name || item.bot_username || item.bot_api_account_id || "未知 Bot")}</strong>
+          <span class="badge ${item.ok ? "uploaded" : "failed"}">${item.ok ? "成功" : "失败"}</span>
+        </div>
+        <div class="meta upload-task-meta">
+          ${item.bot_username ? `<span class="settings-item-pill">@${escapeHtml(item.bot_username)}</span>` : ""}
+          ${item.target_kind ? `<span class="settings-item-pill">${escapeHtml(item.target_kind)}</span>` : ""}
+          ${item.invited !== undefined ? `<span class="settings-item-pill">${item.invited ? "已邀请/加入" : "已在目标内"}</span>` : ""}
+          ${item.promoted !== undefined ? `<span class="settings-item-pill">${item.promoted ? "已授予管理员" : "未授予管理员"}</span>` : ""}
+        </div>
+        ${item.error ? `<p class="detail-error-line"><span class="danger">${escapeHtml(item.error)}</span></p>` : ""}
+      </article>
+    `).join("")
+    : `<p class="muted">没有可展示的结果。</p>`;
+  openDialog("bot-setup-result-dialog");
+}
+
+function rememberChannelBotSetupSummary(channelId, payload = {}) {
+  if (!channelId) return;
+  const failedNames = (payload.results || [])
+    .filter((item) => !item.ok)
+    .map((item) => item.bot_name || item.bot_username || item.bot_api_account_id || "未知 Bot");
+  state.channelBotSetupSummaryByChannel[channelId] = {
+    total: payload.total || (payload.results || []).length || 0,
+    success_count: payload.success_count || ((payload.results || []).filter((item) => item.ok).length),
+    failed_names: failedNames,
+    at: new Date().toLocaleString(),
+  };
+}
+
+async function runChannelBotSetup(channelId, { allBots = false, botApiAccountId = "", adminTitle = "Uploader Bot" } = {}) {
+  const endpoint = allBots
+    ? `/api/channels/${channelId}/setup-all-bots`
+    : `/api/channels/${channelId}/setup-bot`;
+  const result = await submitJson(endpoint, {
+    bot_api_account_id: botApiAccountId,
+    admin_title: adminTitle,
+  });
+  const results = allBots ? (result.results || []) : [result];
+  const successCount = allBots
+    ? (Array.isArray(result.results) ? result.results.filter((item) => item.ok).length : (result.success_count || 0))
+    : 1;
+  rememberChannelBotSetupSummary(channelId, {
+    total: allBots ? (result.total || results.length) : 1,
+    success_count: successCount,
+    results,
+  });
+  await loadSettings();
+  showBotSetupResultDialog({
+    title: `${allBots ? "批量接入结果" : "频道接入结果"} · ${result.channel_name}`,
+    summary: allBots
+      ? `共处理 ${result.total || 0} 个 Bot，成功 ${successCount} 个。`
+      : `${result.bot_name || result.bot_username} 已处理完成。`,
+    results,
+  });
+  pushToast(
+    allBots
+      ? `已处理 ${result.total || 0} 个 Bot，成功 ${successCount} 个`
+      : `Bot 已完成接入：${result.bot_username} -> ${result.channel_name}（${result.promoted ? "已授予管理员" : "未授予管理员"}）`,
+    successCount ? "success" : "info",
+  );
+  return result;
+}
+
+function initManagedDialog(id, { onClose } = {}) {
+  const dialog = document.getElementById(id);
+  if (!dialog) return;
+
+  dialog.addEventListener("click", (event) => {
+    const rect = dialog.getBoundingClientRect();
+    const clickedBackdrop = event.target === dialog
+      && (event.clientX < rect.left
+        || event.clientX > rect.right
+        || event.clientY < rect.top
+        || event.clientY > rect.bottom);
+    if (clickedBackdrop) {
+      dialog.close();
+    }
+  });
+
+  dialog.addEventListener("close", () => {
+    onClose?.();
+  });
+}
+
 function initBrowserSidebarToggle() {
   const toolbar = document.querySelector(".file-toolbar");
   const sidebarToggle = document.getElementById("toggle-browser-sidebar");
@@ -194,6 +311,15 @@ function initTaskColumnControl() {
     window.localStorage.setItem("tgup:task-columns", String(state.taskColumns));
     renderUploads();
   });
+}
+
+function syncTopbarOffset() {
+  const topbar = document.querySelector(".topbar");
+  const root = document.documentElement;
+  if (!topbar || !root) return;
+  const height = Math.ceil(topbar.getBoundingClientRect().height);
+  const offset = Math.max(154, height + 16);
+  root.style.setProperty("--topbar-offset", `${offset}px`);
 }
 
 function renderAccessScreen() {
@@ -316,10 +442,16 @@ function refreshPolling() {
     if (!hasActiveUploadTasks()) {
       return;
     }
+    if (uploadSyncInFlight) {
+      return;
+    }
+    uploadSyncInFlight = true;
     try {
       await syncUploadProgress();
     } catch {
       // Keep the current UI stable; manual refresh remains available.
+    } finally {
+      uploadSyncInFlight = false;
     }
   }, UPLOAD_POLL_INTERVAL_MS);
 }
@@ -346,6 +478,51 @@ async function handleAction(event) {
     const { action, id } = button.dataset;
     if (action === "edit-channel") {
       fillChannelForm(id);
+      openDialog("channel-dialog");
+      return;
+    }
+    if (action === "setup-channel-bot") {
+      const channel = state.settings?.channels?.find((item) => item.id === id);
+      const defaultTitle = "Uploader Bot";
+      const adminTitle = window.prompt("请输入管理员称号（可留默认）", defaultTitle);
+      if (adminTitle === null) {
+        return;
+      }
+      await runChannelBotSetup(id, {
+        allBots: false,
+        botApiAccountId: channel?.bot_api_account_id || "",
+        adminTitle: adminTitle.trim() || defaultTitle,
+      });
+      return;
+    }
+    if (action === "setup-channel-all-bots") {
+      const defaultTitle = "Uploader Bot";
+      const adminTitle = window.prompt("请输入管理员称号（将用于全部 Bot，可留默认）", defaultTitle);
+      if (adminTitle === null) {
+        return;
+      }
+      await runChannelBotSetup(id, {
+        allBots: true,
+        adminTitle: adminTitle.trim() || defaultTitle,
+      });
+      return;
+    }
+    if (action === "edit-bot-api-account") {
+      fillBotApiAccountForm(id);
+      openDialog("bot-api-dialog");
+      return;
+    }
+    if (action === "test-bot-api-account") {
+      const result = await api(`/api/settings/bot-api/accounts/${id}/test`, { method: "POST", body: "{}" });
+      document.getElementById("bot-api-test-result").textContent = `连接成功：${result.first_name || result.username || "Bot"} (${result.id || "unknown"})`;
+      pushToast("Bot API 连通性测试成功", "success");
+      return;
+    }
+    if (action === "delete-bot-api-account") {
+      await api(`/api/settings/bot-api/accounts/${id}`, { method: "DELETE", headers: {} });
+      resetBotApiAccountForm();
+      await loadSettings();
+      pushToast("Bot API 账号已删除", "success");
       return;
     }
     if (action === "delete-channel") {
@@ -356,6 +533,7 @@ async function handleAction(event) {
     }
     if (action === "edit-folder") {
       fillFolderForm(id);
+      openDialog("folder-dialog");
       return;
     }
     if (action === "delete-folder") {
@@ -402,21 +580,30 @@ async function handleAction(event) {
 }
 
 function wireEvents() {
+  syncTopbarOffset();
   initBrowserSidebarToggle();
   initFileColumnControl();
   initTaskColumnControl();
   syncFolderMediaGroupControls();
   initPreviewSize();
+  initManagedDialog("channel-dialog", { onClose: () => resetChannelForm() });
+  initManagedDialog("bot-api-dialog", { onClose: () => resetBotApiAccountForm() });
+  initManagedDialog("bot-setup-result-dialog");
+  initManagedDialog("folder-dialog", { onClose: () => resetFolderForm() });
 
   const debouncedFileSearch = debounce((value) => {
     state.fileSearch = value.trim().toLowerCase();
     state.filePage = 1;
-    renderFiles();
+    if (state.selectedFolderId) {
+      void loadFiles(state.selectedFolderId, false);
+    } else {
+      renderFiles();
+    }
   });
   const debouncedTaskSearch = debounce((value) => {
     state.taskSearch = value.trim();
     state.uploadPage = 1;
-    renderUploads();
+    void loadUploads();
   });
 
   document.getElementById("refresh-all").addEventListener("click", refreshDashboard);
@@ -465,10 +652,14 @@ function wireEvents() {
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
+      syncTopbarOffset();
       refreshPolling();
       void refreshActiveTabData();
     }
   });
+
+  window.addEventListener("resize", syncTopbarOffset);
+  window.addEventListener("layout:topbar-sync", syncTopbarOffset);
 
   document.querySelectorAll("[data-settings-tab-trigger]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -482,7 +673,6 @@ function wireEvents() {
       api_id: document.getElementById("api-id").value.trim() ? Number(document.getElementById("api-id").value) : null,
       api_hash: document.getElementById("api-hash").value.trim(),
       phone_number: document.getElementById("phone-number").value.trim(),
-      upload_workers: Number(document.getElementById("upload-workers").value) || 1,
     };
     await submitJson("/api/auth/start", payload);
     setSettingsFormDirty("api", false);
@@ -495,12 +685,170 @@ function wireEvents() {
       api_id: document.getElementById("api-id").value.trim() ? Number(document.getElementById("api-id").value) : null,
       api_hash: document.getElementById("api-hash").value.trim(),
       phone_number: document.getElementById("phone-number").value.trim(),
-      upload_workers: Number(document.getElementById("upload-workers").value) || 1,
     };
     await submitJson("/api/settings/api", payload);
     setSettingsFormDirty("api", false);
     await loadSettings();
     pushToast("登录配置已保存", "success");
+  });
+
+  document.getElementById("proxy-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = {
+      enabled: document.getElementById("proxy-enabled").checked,
+      type: document.getElementById("proxy-type").value,
+      host: document.getElementById("proxy-host").value.trim(),
+      port: Number(document.getElementById("proxy-port").value) || 1080,
+      username: document.getElementById("proxy-username").value.trim(),
+      password: document.getElementById("proxy-password").value.trim(),
+    };
+    await submitJson("/api/settings/proxy", payload);
+    setSettingsFormDirty("proxy", false);
+    await loadSettings();
+    pushToast(payload.enabled ? "代理已启用并保存" : "代理已关闭并保存", "success");
+  });
+
+  document.getElementById("bot-api-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const accountId = document.getElementById("bot-api-account-id").value;
+    const payload = {
+      name: document.getElementById("bot-api-account-name").value.trim(),
+      bot_token: document.getElementById("bot-api-token").value.trim(),
+      send_rate_limit_per_minute: Number(document.getElementById("bot-api-rate-limit").value) || 20,
+      send_rate_limit_per_channel_per_minute: Number(document.getElementById("bot-api-channel-rate-limit").value) || 10,
+      send_jitter_min_ms: Number(document.getElementById("bot-api-jitter-min").value) || 0,
+      send_jitter_max_ms: Number(document.getElementById("bot-api-jitter-max").value) || 0,
+      auto_slowdown_enabled: document.getElementById("bot-api-auto-slowdown-enabled").checked,
+      auto_slowdown_factor_percent: Number(document.getElementById("bot-api-auto-slowdown-factor").value) || 50,
+      auto_slowdown_duration_seconds: Number(document.getElementById("bot-api-auto-slowdown-duration").value) || 600,
+      enabled: document.getElementById("bot-api-enabled").checked,
+    };
+    const resultNode = document.getElementById("bot-api-test-result");
+    resultNode.textContent = "保存中...";
+    try {
+      const endpoint = accountId
+        ? `/api/settings/bot-api/accounts/${accountId}`
+        : "/api/settings/bot-api/accounts";
+      const savedAccount = await submitJson(endpoint, payload, accountId ? "PUT" : "POST");
+      resultNode.textContent = "测试中...";
+      if (!savedAccount) {
+        throw new Error("保存成功，但未找到对应账号");
+      }
+      const result = await api(`/api/settings/bot-api/accounts/${savedAccount.id}/test`, { method: "POST", body: "{}" });
+      resetBotApiAccountForm();
+      closeDialog("bot-api-dialog");
+      setSettingsFormDirty("botApi", false);
+      await loadSettings();
+      resultNode.textContent = `连接成功：${result.first_name || result.username || "Bot"} (${result.id || "unknown"})`;
+      pushToast(accountId ? "Bot API 账号已更新并测试成功" : "Bot API 账号已创建并测试成功", "success");
+    } catch (error) {
+      await loadSettings();
+      resultNode.textContent = `连接失败：${error.message}`;
+      pushToast(`Bot API 保存或测试失败：${error.message}`, "error");
+    }
+  });
+
+  document.getElementById("test-bot-api-connection").addEventListener("click", async () => {
+    const accountId = document.getElementById("bot-api-account-id").value;
+    const resultNode = document.getElementById("bot-api-test-result");
+    if (!accountId) {
+      resultNode.textContent = "请先保存账号后再测试";
+      pushToast("请先保存 Bot API 账号", "error");
+      return;
+    }
+    resultNode.textContent = "测试中...";
+    try {
+      const result = await api(`/api/settings/bot-api/accounts/${accountId}/test`, { method: "POST", body: "{}" });
+      resultNode.textContent = `连接成功：${result.first_name || result.username || "Bot"} (${result.id || "unknown"})`;
+      pushToast("Bot API 连通性测试成功", "success");
+    } catch (error) {
+      resultNode.textContent = `连接失败：${error.message}`;
+      pushToast(`Bot API 测试失败：${error.message}`, "error");
+    }
+  });
+
+  document.getElementById("save-bot-dispatch").addEventListener("click", async () => {
+    const payload = {
+      mode: document.getElementById("bot-dispatch-mode").value,
+      default_bot_api_account_id: document.getElementById("default-bot-api-account").value,
+      smart_queue_scheduling_enabled: document.getElementById("smart-queue-scheduling-enabled").checked,
+    };
+    await submitJson("/api/settings/bot-api/dispatch", payload);
+    setSettingsFormDirty("botApi", false);
+    await loadSettings();
+    syncTopbarOffset();
+    pushToast("Bot 调度设置已保存", "success");
+  });
+
+  document.getElementById("reset-bot-api-account").addEventListener("click", () => {
+    resetBotApiAccountForm();
+  });
+
+  document.getElementById("open-bot-api-dialog").addEventListener("click", () => {
+    resetBotApiAccountForm();
+    openDialog("bot-api-dialog");
+  });
+
+  document.getElementById("open-channel-dialog").addEventListener("click", () => {
+    resetChannelForm();
+    openDialog("channel-dialog");
+  });
+
+  document.getElementById("open-folder-dialog").addEventListener("click", () => {
+    resetFolderForm();
+    openDialog("folder-dialog");
+  });
+
+  document.getElementById("channel-setup-bound-bot").addEventListener("click", async () => {
+    const channelId = document.getElementById("channel-id").value;
+    const botApiAccountId = document.getElementById("channel-bot-api-account").value;
+    if (!channelId) {
+      pushToast("请先保存频道后再执行接入", "error");
+      return;
+    }
+    const defaultTitle = "Uploader Bot";
+    const adminTitle = window.prompt("请输入管理员称号（可留默认）", defaultTitle);
+    if (adminTitle === null) {
+      return;
+    }
+    await runChannelBotSetup(channelId, {
+      allBots: false,
+      botApiAccountId,
+      adminTitle: adminTitle.trim() || defaultTitle,
+    });
+  });
+
+  document.getElementById("channel-setup-all-bots").addEventListener("click", async () => {
+    const channelId = document.getElementById("channel-id").value;
+    if (!channelId) {
+      pushToast("请先保存频道后再执行接入", "error");
+      return;
+    }
+    const defaultTitle = "Uploader Bot";
+    const adminTitle = window.prompt("请输入管理员称号（将用于全部 Bot，可留默认）", defaultTitle);
+    if (adminTitle === null) {
+      return;
+    }
+    await runChannelBotSetup(channelId, {
+      allBots: true,
+      adminTitle: adminTitle.trim() || defaultTitle,
+    });
+  });
+
+  document.getElementById("channel-dialog-close").addEventListener("click", () => closeDialog("channel-dialog"));
+  document.getElementById("bot-api-dialog-close").addEventListener("click", () => closeDialog("bot-api-dialog"));
+  document.getElementById("bot-setup-result-close").addEventListener("click", () => closeDialog("bot-setup-result-dialog"));
+  document.getElementById("folder-dialog-close").addEventListener("click", () => closeDialog("folder-dialog"));
+
+  document.getElementById("normalize-folder-limits")?.addEventListener("click", async () => {
+    const result = await api("/api/settings/folders/normalize-limits", { method: "POST", body: "{}" });
+    await loadSettings();
+    if (!result.changed) {
+      pushToast("当前没有需要修正的目录", "success");
+      return;
+    }
+    const suffix = result.changed > 1 ? `，共修正 ${result.changed} 个目录` : "";
+    pushToast(`目录上传上限已按当前自动策略修正${suffix}`, "success");
   });
 
   document.getElementById("code-form").addEventListener("submit", async (event) => {
@@ -551,10 +899,12 @@ function wireEvents() {
       name: document.getElementById("channel-name").value,
       target: document.getElementById("channel-target").value,
       enabled: document.getElementById("channel-enabled").checked,
+      bot_api_account_id: document.getElementById("channel-bot-api-account").value,
     };
     const channelId = document.getElementById("channel-id").value;
     await submitJson(channelId ? `/api/channels/${channelId}` : "/api/channels", payload, channelId ? "PUT" : "POST");
     resetChannelForm();
+    closeDialog("channel-dialog");
     setSettingsFormDirty("channel", false);
     await loadSettings();
     pushToast(channelId ? "频道已更新" : "频道已创建", "success");
@@ -586,6 +936,7 @@ function wireEvents() {
     const folderId = document.getElementById("folder-id").value;
     await submitJson(folderId ? `/api/folders/${folderId}` : "/api/folders", payload, folderId ? "PUT" : "POST");
     resetFolderForm();
+    closeDialog("folder-dialog");
     setSettingsFormDirty("folder", false);
     await loadSettings();
     pushToast(folderId ? "目录已更新" : "目录已创建", "success");
@@ -594,12 +945,19 @@ function wireEvents() {
   document.getElementById("channel-reset").addEventListener("click", resetChannelForm);
   document.getElementById("folder-reset").addEventListener("click", resetFolderForm);
   document.getElementById("api-form").addEventListener("input", () => setSettingsFormDirty("api", true));
+  document.getElementById("folder-upload-limit").addEventListener("change", syncFolderUploadLimitControls);
+  document.getElementById("proxy-form").addEventListener("input", () => setSettingsFormDirty("proxy", true));
+  document.getElementById("proxy-form").addEventListener("change", () => setSettingsFormDirty("proxy", true));
+  document.getElementById("bot-api-form").addEventListener("input", () => setSettingsFormDirty("botApi", true));
+  document.getElementById("bot-api-form").addEventListener("change", () => setSettingsFormDirty("botApi", true));
+  document.getElementById("bot-dispatch-mode").addEventListener("change", syncBotDispatchControls);
   document.getElementById("channel-form").addEventListener("input", () => setSettingsFormDirty("channel", true));
   document.getElementById("channel-form").addEventListener("change", () => setSettingsFormDirty("channel", true));
   document.getElementById("folder-form").addEventListener("input", () => setSettingsFormDirty("folder", true));
   document.getElementById("folder-form").addEventListener("change", () => setSettingsFormDirty("folder", true));
   document.getElementById("folder-media-group").addEventListener("change", syncFolderMediaGroupControls);
   document.getElementById("folder-media-group-similarity").addEventListener("change", syncFolderMediaGroupControls);
+  document.getElementById("proxy-enabled").addEventListener("change", syncProxyControls);
   document.getElementById("access-password-form").addEventListener("input", () => setSettingsFormDirty("access", true));
 
   document.getElementById("browser-folder").addEventListener("change", async (event) => {
@@ -609,19 +967,25 @@ function wireEvents() {
   document.getElementById("file-type-filter").addEventListener("change", (event) => {
     state.fileTypeFilter = event.target.value;
     state.filePage = 1;
-    renderFiles();
+    if (state.selectedFolderId) {
+      void loadFiles(state.selectedFolderId, false);
+    }
   });
 
   document.getElementById("file-status-filter").addEventListener("change", (event) => {
     state.fileStatusFilter = event.target.value;
     state.filePage = 1;
-    renderFiles();
+    if (state.selectedFolderId) {
+      void loadFiles(state.selectedFolderId, false);
+    }
   });
 
   document.getElementById("file-scope-filter").addEventListener("change", (event) => {
     state.fileScopeFilter = event.target.value;
     state.filePage = 1;
-    renderFiles();
+    if (state.selectedFolderId) {
+      void loadFiles(state.selectedFolderId, false);
+    }
   });
 
   document.getElementById("file-search").addEventListener("input", (event) => {
@@ -632,7 +996,9 @@ function wireEvents() {
     const value = Number(event.target.value);
     state.filePageSize = [10, 20, 50, 100].includes(value) ? value : 10;
     state.filePage = 1;
-    renderFiles();
+    if (state.selectedFolderId) {
+      void loadFiles(state.selectedFolderId, false);
+    }
   });
 
   document.getElementById("select-visible-files").addEventListener("click", () => {
@@ -650,19 +1016,31 @@ function wireEvents() {
   document.getElementById("task-folder-filter").addEventListener("change", (event) => {
     state.taskFolderFilter = event.target.value;
     state.uploadPage = 1;
-    renderUploads();
+    void loadUploads();
   });
 
   document.getElementById("task-status-filter").addEventListener("change", (event) => {
     state.taskStatusFilter = event.target.value;
     state.uploadPage = 1;
-    renderUploads();
+    void loadUploads();
+  });
+
+  document.getElementById("task-error-filter").addEventListener("change", (event) => {
+    state.taskErrorCategoryFilter = event.target.value;
+    state.uploadPage = 1;
+    void loadUploads();
+  });
+
+  document.getElementById("task-scheduling-filter").addEventListener("change", (event) => {
+    state.taskSchedulingFilter = event.target.value;
+    state.uploadPage = 1;
+    void loadUploads();
   });
 
   document.getElementById("task-sort").addEventListener("change", (event) => {
     state.taskSort = event.target.value;
     state.uploadPage = 1;
-    renderUploads();
+    void loadUploads();
   });
 
   document.getElementById("task-search").addEventListener("input", (event) => {
@@ -673,7 +1051,7 @@ function wireEvents() {
     const value = Number(event.target.value);
     state.uploadPageSize = [10, 20, 50, 100].includes(value) ? value : 10;
     state.uploadPage = 1;
-    renderUploads();
+    void loadUploads();
   });
 
   document.getElementById("browser-scan").addEventListener("click", async () => {
@@ -742,6 +1120,13 @@ function wireEvents() {
   });
 
   document.body.addEventListener("click", async (event) => {
+    const scrollButton = event.target.closest("[data-scroll-target]");
+    if (scrollButton) {
+      const target = document.getElementById(scrollButton.dataset.scrollTarget);
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
     if (event.target.id && ["retry-files", "retry-scan-files", "retry-uploads"].includes(event.target.id)) {
       await handlePanelAction(event.target.id);
       return;
@@ -796,20 +1181,22 @@ function wireEvents() {
       } else {
         state.selectedFiles.delete(filePath);
       }
-      renderFiles();
+      syncVisibleFileSelectionUI();
     }
     if (target.matches("[data-file-page]")) {
       const value = Number(target.dataset.filePage);
       if (Number.isFinite(value) && value > 0) {
         state.filePage = value;
-        renderFiles();
+        if (state.selectedFolderId) {
+          void loadFiles(state.selectedFolderId, false);
+        }
       }
     }
     if (target.matches("[data-task-page]")) {
       const value = Number(target.dataset.taskPage);
       if (Number.isFinite(value) && value > 0) {
         state.uploadPage = value;
-        renderUploads();
+        void loadUploads();
       }
     }
     if (target.matches("[data-task-select]")) {
@@ -819,7 +1206,7 @@ function wireEvents() {
       } else {
         state.selectedUploadTaskIds.delete(taskId);
       }
-      renderUploads();
+      syncVisibleTaskSelectionUI();
     }
   });
 

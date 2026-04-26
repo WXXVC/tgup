@@ -66,6 +66,13 @@ export function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+export function marqueeText(value, className = "", title = "") {
+  const safeValue = escapeHtml(value);
+  const safeTitle = escapeHtml(title || value || "");
+  const classes = ["marquee-wrap", className].filter(Boolean).join(" ");
+  return `<span class="${classes}" data-fulltext="${safeTitle}"><span class="marquee-content">${safeValue}</span></span>`;
+}
+
 export function setGlobalBanner(message = "", type = "info") {
   const banner = document.getElementById("global-banner");
   if (!message) {
@@ -140,6 +147,11 @@ export function translateUploadError(message = "") {
   if (!normalized) {
     return "";
   }
+  const separator = normalized.indexOf("|");
+  if (separator > 0) {
+    const remainder = normalized.slice(separator + 1);
+    return translateUploadError(remainder);
+  }
   if (normalized.startsWith("file is locked: ")) {
     return `文件被占用：${normalized.slice("file is locked: ".length)}`;
   }
@@ -149,20 +161,27 @@ export function translateUploadError(message = "") {
   if (normalized === "missing folder, channel, or file") {
     return "目录、频道或文件不存在";
   }
+  if (normalized.includes("限频") && normalized.includes("等待约 ")) {
+    return normalized;
+  }
+  if (normalized === "当前 Bot 正在限频，任务暂时后移") {
+    return normalized;
+  }
   return normalized;
 }
 
+export function parseUploadError(message = "") {
+  const normalized = String(message || "").trim();
+  const separator = normalized.indexOf("|");
+  if (separator <= 0) {
+    return { category: "unknown", message: translateUploadError(normalized) };
+  }
+  return {
+    category: normalized.slice(0, separator),
+    message: translateUploadError(normalized.slice(separator + 1)),
+  };
+}
+
 export function initOverflowMarquee(root = document) {
-  const nodes = root.querySelectorAll("[data-marquee]");
-  nodes.forEach((node) => {
-    const content = node.querySelector("[data-marquee-content]");
-    if (!content) return;
-    node.classList.remove("is-overflowing");
-    content.style.removeProperty("--marquee-distance");
-    const overflow = Math.ceil(content.scrollWidth - node.clientWidth);
-    if (overflow > 4) {
-      node.classList.add("is-overflowing");
-      content.style.setProperty("--marquee-distance", `${overflow}px`);
-    }
-  });
+  return root;
 }

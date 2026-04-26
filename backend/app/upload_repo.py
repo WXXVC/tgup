@@ -2,19 +2,94 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from .db import get_connection
-from .models import UploadBatchItem, UploadStats, UploadStatus, UploadTask
+from .models import (
+    UploadBatchItem,
+    UploadListPagination,
+    UploadListResponse,
+    UploadStats,
+    UploadStatus,
+    UploadTask,
+)
+
+
+@dataclass
+class UploadListCacheEntry:
+    cached_at: float
+    tasks: list[UploadTask]
 
 
 class UploadRepository:
+    TASK_LIST_CACHE_SECONDS = 1.0
+    ACTIVE_TASK_STATUSES = {
+        UploadStatus.PENDING.value,
+        UploadStatus.UPLOADING.value,
+        UploadStatus.LOCKED.value,
+    }
+
+    def __init__(self) -> None:
+        self._task_list_cache: UploadListCacheEntry | None = None
+
     def list_tasks(self) -> list[UploadTask]:
+        now = time.time()
+        cached = self._task_list_cache
+        if cached and (now - cached.cached_at) <= self.TASK_LIST_CACHE_SECONDS:
+            return [item.model_copy() for item in cached.tasks]
         with get_connection() as connection:
             rows = connection.execute(
                 "SELECT * FROM uploads ORDER BY updated_at DESC, created_at DESC"
             ).fetchall()
-        return [self._decode_task(row) for row in rows]
+        tasks = [self._decode_task(row) for row in rows]
+        self._task_list_cache = UploadListCacheEntry(
+            cached_at=now,
+            tasks=[item.model_copy() for item in tasks],
+        )
+        return [item.model_copy() for item in tasks]
+
+    def list_tasks_paginated(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 10,
+        folder_id: str = "all",
+        status: str = "all",
+        error_category: str = "all",
+        scheduling: str = "all",
+        search: str = "",
+        sort: str = "updated_desc",
+    ) -> UploadListResponse:
+        tasks = self.list_tasks()
+        total_all = len(tasks)
+        filtered = self._filter_tasks(
+            tasks,
+            folder_id=folder_id,
+            status=status,
+            error_category=error_category,
+            scheduling=scheduling,
+            search=search,
+            sort=sort,
+        )
+        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        total_items = len(filtered)
+        total_pages = max(1, (total_items + page_size - 1) // page_size)
+        page = min(max(1, page), total_pages)
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        return UploadListResponse(
+            items=filtered[start_index:end_index],
+            pagination=UploadListPagination(
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                total_items=total_items,
+                start=(start_index + 1) if total_items else 0,
+                end=min(end_index, total_items),
+            ),
+            total_all=total_all,
+        )
 
     def get_task(self, task_id: str) -> UploadTask | None:
         with get_connection() as connection:
@@ -42,13 +117,15 @@ class UploadRepository:
             connection.execute(
                 """
                 INSERT INTO uploads (
-                    id, folder_id, channel_id, relative_path, absolute_path, source_relative_path, source_absolute_path, task_kind, batch_paths, batch_items, completed_count, status,
+                    id, folder_id, channel_id, bot_api_account_id, uploader_engine, relative_path, absolute_path, source_relative_path, source_absolute_path, task_kind, batch_paths, batch_items, completed_count, status,
                     progress, error_message, caption, group_debug, created_at, updated_at
                 ) VALUES (
-                    :id, :folder_id, :channel_id, :relative_path, :absolute_path, :source_relative_path, :source_absolute_path, :task_kind, :batch_paths, :batch_items, :completed_count, :status,
+                    :id, :folder_id, :channel_id, :bot_api_account_id, :uploader_engine, :relative_path, :absolute_path, :source_relative_path, :source_absolute_path, :task_kind, :batch_paths, :batch_items, :completed_count, :status,
                     :progress, :error_message, :caption, :group_debug, :created_at, :updated_at
                 )
                 ON CONFLICT(id) DO UPDATE SET
+                    bot_api_account_id = excluded.bot_api_account_id,
+                    uploader_engine = excluded.uploader_engine,
                     source_relative_path = excluded.source_relative_path,
                     source_absolute_path = excluded.source_absolute_path,
                     task_kind = excluded.task_kind,
@@ -65,6 +142,7 @@ class UploadRepository:
                 payload,
             )
             connection.commit()
+        self.invalidate_task_list_cache()
         return task
 
     def _decode_task(self, row) -> UploadTask:
@@ -87,6 +165,8 @@ class UploadRepository:
         with get_connection() as connection:
             cursor = connection.execute("DELETE FROM uploads WHERE id = ?", (task_id,))
             connection.commit()
+        if cursor.rowcount:
+            self.invalidate_task_list_cache()
         return cursor.rowcount > 0
 
     def delete_tasks(self, task_ids: list[str]) -> int:
@@ -99,6 +179,8 @@ class UploadRepository:
                 tuple(task_ids),
             )
             connection.commit()
+        if cursor.rowcount:
+            self.invalidate_task_list_cache()
         return cursor.rowcount
 
     def clear_tasks(self, statuses: list[UploadStatus] | None = None) -> int:
@@ -112,6 +194,8 @@ class UploadRepository:
             else:
                 cursor = connection.execute("DELETE FROM uploads")
             connection.commit()
+        if cursor.rowcount:
+            self.invalidate_task_list_cache()
         return cursor.rowcount
 
     def stats(self) -> UploadStats:
@@ -166,3 +250,118 @@ class UploadRepository:
                 (folder_id, relative_path, absolute_path, size, modified_at, time.time(), message_id),
             )
             connection.commit()
+
+    def invalidate_task_list_cache(self) -> None:
+        self._task_list_cache = None
+
+    def has_active_task_for_file(self, folder_id: str, relative_path: str) -> bool:
+        normalized_path = str(relative_path or "").strip().replace("\\", "/")
+        if not folder_id or not normalized_path:
+            return False
+        for task in self.list_tasks():
+            task_status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            if task.folder_id != folder_id or task_status not in self.ACTIVE_TASK_STATUSES:
+                continue
+            if task.source_relative_path == normalized_path:
+                return True
+            if task.relative_path == normalized_path:
+                return True
+            if normalized_path in (task.batch_paths or []):
+                return True
+        return False
+
+    def has_active_task_for_signature(
+        self,
+        folder_id: str,
+        batch_paths: list[str],
+        source_relative_path: str = "",
+    ) -> bool:
+        normalized_batch_paths = tuple(sorted(
+            str(item or "").strip().replace("\\", "/")
+            for item in (batch_paths or [])
+            if str(item or "").strip()
+        ))
+        normalized_source = str(source_relative_path or "").strip().replace("\\", "/")
+        if not folder_id or (not normalized_batch_paths and not normalized_source):
+            return False
+        for task in self.list_tasks():
+            task_status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            if task.folder_id != folder_id or task_status not in self.ACTIVE_TASK_STATUSES:
+                continue
+            task_source = str(task.source_relative_path or "").strip().replace("\\", "/")
+            if normalized_source:
+                if task_source == normalized_source:
+                    return True
+                continue
+            task_batch = tuple(sorted(
+                str(item or "").strip().replace("\\", "/")
+                for item in (task.batch_paths or [task.relative_path])
+                if str(item or "").strip()
+            ))
+            if task_batch == normalized_batch_paths:
+                return True
+        return False
+
+    def _filter_tasks(
+        self,
+        tasks: list[UploadTask],
+        *,
+        folder_id: str,
+        status: str,
+        error_category: str,
+        scheduling: str,
+        search: str,
+        sort: str,
+    ) -> list[UploadTask]:
+        status_rank = {name: index for index, name in enumerate(["uploading", "pending", "failed", "locked", "uploaded"])}
+        normalized_search = search.strip().lower()
+        items = []
+        for task in tasks:
+            if folder_id != "all" and task.folder_id != folder_id:
+                continue
+            task_status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            if status != "all" and task_status != status:
+                continue
+            parsed = self._parse_upload_error(task.error_message or "")
+            if error_category != "all" and parsed["category"] != error_category:
+                continue
+            if scheduling != "all":
+                if scheduling == "normal":
+                    if parsed["category"] in {"smart_skip", "local_rate_limit"}:
+                        continue
+                elif scheduling == "auto_slowdown":
+                    if parsed["category"] != "local_rate_limit" or "429 自动降速" not in parsed["message"]:
+                        continue
+                elif parsed["category"] != scheduling:
+                    continue
+            if normalized_search:
+                haystack = f"{task.relative_path} {task.caption or ''} {parsed['message']}".lower()
+                if normalized_search not in haystack:
+                    continue
+            items.append(task)
+
+        def compare_key(task: UploadTask):
+            task_status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            rank = status_rank.get(task_status, 999)
+            if sort == "created_desc":
+                secondary = -(task.created_at or 0)
+            elif sort == "progress_desc":
+                secondary = -(task.progress or 0)
+            elif sort == "name_asc":
+                secondary = task.relative_path or ""
+            else:
+                secondary = -(task.updated_at or 0)
+            tertiary = -(task.updated_at or 0)
+            return (rank, secondary, tertiary)
+
+        return sorted(items, key=compare_key)
+
+    def _parse_upload_error(self, message: str) -> dict[str, str]:
+        normalized = str(message or "").strip()
+        separator = normalized.find("|")
+        if separator <= 0:
+            return {"category": "unknown", "message": normalized}
+        return {
+            "category": normalized[:separator],
+            "message": normalized[separator + 1 :],
+        }

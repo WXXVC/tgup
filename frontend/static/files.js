@@ -7,8 +7,16 @@ import {
   formatBytes,
   initOverflowMarquee,
   labeledBadge,
+  marqueeText,
   setPanelFeedback,
 } from "./utils.js";
+
+let lastFileStatsMarkup = "";
+let lastFileSummaryText = "";
+let lastCurrentPathMarkup = "";
+let lastDirectoryTreeMarkup = "";
+let lastFileListMarkup = "";
+let lastFilePaginationMarkup = "";
 
 function applyPreviewSize() {
   const dialog = document.getElementById("preview-dialog");
@@ -84,85 +92,14 @@ function previewMarkup(file) {
   return `<span>${fileTypeLabel(file.file_type)}</span>`;
 }
 
+function fileDisplayName(file) {
+  const normalized = String(file.relative_path || "").replaceAll("\\", "/");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.at(-1) || normalized || "未命名文件";
+}
+
 export function filteredFiles() {
-  return state.files.filter((file) => {
-    const fileDir = file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join("/") : "";
-    if (state.currentSubdir) {
-      const prefix = `${state.currentSubdir}/`;
-      if (state.fileScopeFilter === "direct") {
-        if (fileDir !== state.currentSubdir) {
-          return false;
-        }
-      } else if (!(file.relative_path === state.currentSubdir || file.relative_path.startsWith(prefix))) {
-        return false;
-      }
-    } else if (state.fileScopeFilter === "direct" && fileDir) {
-      return false;
-    }
-    if (state.fileTypeFilter !== "all" && file.file_type !== state.fileTypeFilter) {
-      return false;
-    }
-    if (state.fileStatusFilter !== "all" && file.status !== state.fileStatusFilter) {
-      return false;
-    }
-    if (state.fileSearch) {
-      const query = state.fileSearch.toLowerCase();
-      const searchSource = `${file.relative_path} ${file.absolute_path}`.toLowerCase();
-      if (!searchSource.includes(query)) {
-        return false;
-      }
-    }
-    return true;
-  });
-}
-
-function paginatedFiles(files) {
-  const pageSize = [10, 20, 50, 100].includes(state.filePageSize) ? state.filePageSize : 10;
-  const totalPages = Math.max(1, Math.ceil(files.length / pageSize));
-  const page = Math.min(Math.max(1, state.filePage), totalPages);
-  const start = (page - 1) * pageSize;
-  const end = start + pageSize;
-  state.filePage = page;
-  state.filePageSize = pageSize;
-  return {
-    items: files.slice(start, end),
-    page,
-    pageSize,
-    totalPages,
-    totalItems: files.length,
-    start: files.length ? start + 1 : 0,
-    end: Math.min(end, files.length),
-  };
-}
-
-function directoryTree() {
-  const map = new Map();
-  for (const file of state.files) {
-    const parts = file.relative_path.split("/").slice(0, -1);
-    let current = "";
-    let parent = "";
-    for (const part of parts) {
-      current = current ? `${current}/${part}` : part;
-      if (!map.has(current)) {
-        map.set(current, {
-          path: current,
-          name: part,
-          count: 0,
-          depth: current.split("/").length - 1,
-          parent,
-          children: new Set(),
-        });
-      }
-      map.get(current).count += 1;
-      if (parent && map.has(parent)) {
-        map.get(parent).children.add(current);
-      }
-      parent = current;
-    }
-  }
-  return [...map.values()]
-    .sort((left, right) => left.path.localeCompare(right.path))
-    .map((node) => ({ ...node, children: [...node.children].sort((left, right) => left.localeCompare(right)) }));
+  return state.files;
 }
 
 function visibleDirectoryNodes(nodes) {
@@ -207,15 +144,31 @@ function ensureExpandedForCurrentSubdir() {
 function renderDirectoryTree() {
   const container = document.getElementById("file-tree");
   ensureExpandedForCurrentSubdir();
-  const nodes = visibleDirectoryNodes(directoryTree());
+  const nodes = visibleDirectoryNodes(state.fileTreeNodes || []);
   const currentAncestors = new Set(ancestorPaths(state.currentSubdir));
   if (!state.selectedFolderId) {
-    container.innerHTML = `<p class="muted">选择目录后可浏览子目录树。</p>`;
+    const emptyMarkup = `<p class="muted">选择目录后可浏览子目录树。</p>`;
+    if (container.innerHTML !== emptyMarkup) {
+      container.innerHTML = emptyMarkup;
+    }
     document.getElementById("file-current-path").textContent = "";
+    lastCurrentPathMarkup = "";
+    lastDirectoryTreeMarkup = emptyMarkup;
     return;
   }
-  document.getElementById("file-current-path").textContent = `${state.currentSubdir ? `当前目录: ${state.currentSubdir}` : "当前目录: 根目录"} · ${state.fileScopeFilter === "direct" ? "仅当前目录文件" : "包含子目录文件"}`;
-  container.innerHTML = nodes.length
+  const currentPath = state.currentSubdir || "根目录";
+  const currentPathMarkup = `
+    <span class="current-path-line">
+      <span class="muted">当前目录</span>
+      ${marqueeText(currentPath, "current-path-value")}
+      <span class="current-path-scope">${escapeHtml(state.fileScopeFilter === "direct" ? "仅当前目录文件" : "包含子目录文件")}</span>
+    </span>
+  `;
+  if (currentPathMarkup !== lastCurrentPathMarkup) {
+    document.getElementById("file-current-path").innerHTML = currentPathMarkup;
+    lastCurrentPathMarkup = currentPathMarkup;
+  }
+  const treeMarkup = nodes.length
     ? nodes.map((node) => `
       <button
         class="tree-node ${node.path === state.currentSubdir ? "active" : ""} ${node.path !== state.currentSubdir && currentAncestors.has(node.path) ? "ancestor" : ""}"
@@ -228,47 +181,128 @@ function renderDirectoryTree() {
             ? `<span class="tree-node-toggle ${node.isCollapsed ? "collapsed" : ""}" data-tree-toggle="${escapeHtml(node.path)}" aria-hidden="true"></span>`
             : `<span class="tree-node-toggle spacer" aria-hidden="true"></span>`}
           <span class="tree-node-folder" aria-hidden="true"></span>
-          <span class="tree-node-label" title="${escapeHtml(node.path)}">${escapeHtml(node.path.split("/").at(-1) || node.path)}</span>
+          ${marqueeText(node.path.split("/").at(-1) || node.path, "tree-node-label", node.path)}
         </span>
         <small>${node.count}</small>
       </button>
     `).join("")
     : `<p class="muted">当前目录没有子目录。</p>`;
+  if (treeMarkup !== lastDirectoryTreeMarkup) {
+    container.innerHTML = treeMarkup;
+    lastDirectoryTreeMarkup = treeMarkup;
+  }
+  initOverflowMarquee(container);
 }
 
 function renderFileStats(files) {
-  const stats = {
+  const stats = state.fileStats || {
     total: files.length,
-    pending: files.filter((item) => item.status === "pending").length,
-    uploaded: files.filter((item) => item.status === "uploaded").length,
-    locked: files.filter((item) => item.status === "locked").length,
-    selected: files.filter((item) => state.selectedFiles.has(item.relative_path)).length,
+    pending: 0,
+    uploaded: 0,
+    locked: 0,
   };
 
-  document.getElementById("file-stats").innerHTML = `
+  const markup = `
     <div class="stat-card"><strong>${stats.total}</strong><span>当前结果</span></div>
     <div class="stat-card"><strong>${stats.pending}</strong><span>未上传</span></div>
     <div class="stat-card"><strong>${stats.uploaded}</strong><span>已上传</span></div>
     <div class="stat-card"><strong>${stats.locked}</strong><span>占用中</span></div>
-    <div class="stat-card"><strong>${stats.selected}</strong><span>已选中</span></div>
+    <div class="stat-card"><strong>${state.selectedFiles.size}</strong><span>已选中</span></div>
   `;
+  if (markup !== lastFileStatsMarkup) {
+    document.getElementById("file-stats").innerHTML = markup;
+    lastFileStatsMarkup = markup;
+  }
+}
+
+function updateFileSelectionDependentUI(files, pageItems) {
+  renderFileStats(files);
+  const summary = document.getElementById("file-summary");
+  if (summary) {
+    const filteredTotal = state.filePagination?.total_items ?? files.length;
+    const nextSummaryText = `共 ${state.fileTotalAll} 个文件，筛选后 ${filteredTotal} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个`;
+    if (nextSummaryText !== lastFileSummaryText) {
+      summary.textContent = nextSummaryText;
+      lastFileSummaryText = nextSummaryText;
+    }
+  }
+}
+
+export function syncVisibleFileSelectionUI() {
+  const files = filteredFiles();
+  files.forEach((file) => {
+    const checkbox = document.querySelector(`[data-file-select="${CSS.escape(file.relative_path)}"]`);
+    if (checkbox) {
+      checkbox.checked = state.selectedFiles.has(file.relative_path);
+    }
+  });
+  updateFileSelectionDependentUI(files, files);
 }
 
 function renderFilePagination(pagination) {
   const container = document.getElementById("file-pagination");
   if (!container) return;
-  if (pagination.totalItems === 0) {
+  const normalized = {
+    page: pagination.page ?? 1,
+    totalPages: pagination.totalPages ?? pagination.total_pages ?? 1,
+    totalItems: pagination.totalItems ?? pagination.total_items ?? 0,
+    start: pagination.start ?? 0,
+    end: pagination.end ?? 0,
+  };
+  if (normalized.totalItems === 0) {
     container.classList.add("hidden");
-    container.innerHTML = "";
+    if (lastFilePaginationMarkup !== "") {
+      container.innerHTML = "";
+      lastFilePaginationMarkup = "";
+    }
     return;
   }
   container.classList.remove("hidden");
-  container.innerHTML = `
-    <div class="pagination-summary">第 ${pagination.page}/${pagination.totalPages} 页，显示 ${pagination.start}-${pagination.end} / ${pagination.totalItems}</div>
+  const markup = `
+    <div class="pagination-summary">第 ${normalized.page}/${normalized.totalPages} 页，显示 ${normalized.start}-${normalized.end} / ${normalized.totalItems}</div>
     <div class="pagination-actions">
-      <button class="ghost" type="button" data-file-page="${pagination.page - 1}" ${pagination.page <= 1 ? "disabled" : ""}>上一页</button>
-      <button class="ghost" type="button" data-file-page="${pagination.page + 1}" ${pagination.page >= pagination.totalPages ? "disabled" : ""}>下一页</button>
+      <button class="ghost" type="button" data-file-page="${normalized.page - 1}" ${normalized.page <= 1 ? "disabled" : ""}>上一页</button>
+      <button class="ghost" type="button" data-file-page="${normalized.page + 1}" ${normalized.page >= normalized.totalPages ? "disabled" : ""}>下一页</button>
     </div>
+  `;
+  if (markup !== lastFilePaginationMarkup) {
+    container.innerHTML = markup;
+    lastFilePaginationMarkup = markup;
+  }
+}
+
+function renderFileCard(file) {
+  return `
+    <article class="file-card">
+      <div class="file-card-head">
+        <label class="toggle file-card-toggle">
+          <input type="checkbox" data-file-select="${escapeHtml(file.relative_path)}" ${state.selectedFiles.has(file.relative_path) ? "checked" : ""}>
+          ${marqueeText(fileDisplayName(file), "file-card-title", file.relative_path)}
+        </label>
+        <div class="file-card-status">${labeledBadge(file.status)}</div>
+      </div>
+      <button class="preview" data-preview="${escapeHtml(file.relative_path)}">
+        ${previewMarkup(file)}
+      </button>
+      <div class="file-meta-grid">
+        <div>
+          <strong>类型</strong>
+          <span>${fileTypeLabel(file.file_type)}</span>
+        </div>
+        <div>
+          <strong>大小</strong>
+          <span>${formatBytes(file.size)}</span>
+        </div>
+        <div>
+          <strong>修改时间</strong>
+          <span>${escapeHtml(new Date(file.modified_at * 1000).toLocaleDateString())}</span>
+        </div>
+        <div>
+          <strong>路径层级</strong>
+          ${marqueeText(file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join(" / ") : "根目录")}
+        </div>
+      </div>
+    </article>
   `;
 }
 
@@ -286,6 +320,8 @@ export function renderFiles() {
     document.getElementById("file-stats").innerHTML = "";
     document.getElementById("file-current-path").textContent = "";
     document.getElementById("file-tree").innerHTML = "";
+    lastFileListMarkup = "";
+    lastFilePaginationMarkup = "";
     renderFilePagination({ totalItems: 0 });
     setPanelFeedback("file-feedback", {
       visible: true,
@@ -306,7 +342,11 @@ export function renderFiles() {
       title: "正在加载文件",
       message: "文件列表与目录树正在同步，请稍候。",
     });
-    container.innerHTML = fileSkeleton();
+    const markup = fileSkeleton();
+    if (markup !== lastFileListMarkup) {
+      container.innerHTML = markup;
+      lastFileListMarkup = markup;
+    }
     summary.textContent = "正在读取文件列表…";
     return;
   }
@@ -322,14 +362,23 @@ export function renderFiles() {
       actionLabel: "重试",
       actionId: "retry-files",
     });
-    container.innerHTML = "";
+    if (lastFileListMarkup !== "") {
+      container.innerHTML = "";
+      lastFileListMarkup = "";
+    }
     summary.textContent = "文件列表加载失败";
     return;
   }
 
   const files = filteredFiles();
-  const pagination = paginatedFiles(files);
-  const pageItems = pagination.items;
+  const pagination = state.filePagination || {
+    page: 1,
+    total_pages: 1,
+    total_items: files.length,
+    start: files.length ? 1 : 0,
+    end: files.length,
+  };
+  const pageItems = files;
   renderDirectoryTree();
   renderFileStats(files);
   renderFilePagination(pagination);
@@ -337,43 +386,20 @@ export function renderFiles() {
     visible: files.length === 0,
     tone: "empty",
     title: "当前筛选下没有文件",
-    message: state.files.length ? "可以尝试清空筛选、切换目录或重新扫描。" : "这个目录暂时没有可展示的文件。",
+    message: state.fileTotalAll ? "可以尝试清空筛选、切换目录或重新扫描。" : "这个目录暂时没有可展示的文件。",
     actionLabel: "立即扫描",
     actionId: "retry-scan-files",
   });
-  summary.textContent = `共 ${state.files.length} 个文件，筛选后 ${files.length} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个`;
-  container.innerHTML = files.length
-    ? pageItems.map((file) => `
-      <article class="file-card">
-        <div class="file-card-status">${labeledBadge(file.status)}</div>
-        <label class="toggle">
-          <input type="checkbox" data-file-select="${escapeHtml(file.relative_path)}" ${state.selectedFiles.has(file.relative_path) ? "checked" : ""}>
-          <span class="truncate-text" title="${escapeHtml(file.relative_path)}">${escapeHtml(file.relative_path)}</span>
-        </label>
-        <button class="preview" data-preview="${escapeHtml(file.relative_path)}">
-          ${previewMarkup(file)}
-        </button>
-        <div class="file-meta-grid">
-          <div>
-            <strong>类型</strong>
-            <span>${fileTypeLabel(file.file_type)}</span>
-          </div>
-          <div>
-            <strong>大小</strong>
-            <span>${formatBytes(file.size)}</span>
-          </div>
-          <div>
-            <strong>修改时间</strong>
-            <span>${escapeHtml(new Date(file.modified_at * 1000).toLocaleDateString())}</span>
-          </div>
-          <div>
-            <strong>路径层级</strong>
-            <span class="truncate-text" title="${escapeHtml(file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join(" / ") : "根目录")}">${escapeHtml(file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join(" / ") : "根目录")}</span>
-          </div>
-        </div>
-      </article>
-    `).join("")
+  updateFileSelectionDependentUI(files, pageItems);
+  const listMarkup = files.length
+    ? pageItems.map((file) => renderFileCard(file)).join("")
     : `<p class="muted">当前筛选条件下没有文件。</p>`;
+  if (listMarkup !== lastFileListMarkup) {
+    container.innerHTML = listMarkup;
+    lastFileListMarkup = listMarkup;
+    initOverflowMarquee(container);
+  }
+  initOverflowMarquee(document.getElementById("file-current-path"));
 }
 
 export async function loadFiles(folderId, resetSelection = true) {
@@ -381,6 +407,17 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.selectedFolderId = "";
     state.currentSubdir = "";
     state.files = [];
+    state.fileTreeNodes = [];
+    state.fileStats = null;
+    state.fileTotalAll = 0;
+    state.filePagination = {
+      page: 1,
+      page_size: 10,
+      total_pages: 1,
+      total_items: 0,
+      start: 0,
+      end: 0,
+    };
     state.filePage = 1;
     if (resetSelection) {
       state.selectedFiles.clear();
@@ -399,10 +436,29 @@ export async function loadFiles(folderId, resetSelection = true) {
   }
   renderFiles();
   try {
-    state.files = await api(`/api/folders/${folderId}/files`);
+    const params = new URLSearchParams({
+      page: String(state.filePage || 1),
+      page_size: String(state.filePageSize || 10),
+      subdir: state.currentSubdir || "",
+      scope: state.fileScopeFilter || "direct",
+      file_type: state.fileTypeFilter || "all",
+      status: state.fileStatusFilter || "all",
+      search: state.fileSearch || "",
+    });
+    const payload = await api(`/api/folders/${folderId}/files?${params.toString()}`);
+    state.files = payload.items || [];
+    state.fileTreeNodes = payload.tree || [];
+    state.fileStats = payload.stats || null;
+    state.filePagination = payload.pagination || state.filePagination;
+    state.fileTotalAll = payload.total_all || 0;
+    state.filePage = payload.pagination?.page || state.filePage;
+    state.filePageSize = payload.pagination?.page_size || state.filePageSize;
   } catch (error) {
     state.ui.errors.files = error.message;
     state.files = [];
+    state.fileTreeNodes = [];
+    state.fileStats = null;
+    state.fileTotalAll = 0;
   } finally {
     state.ui.loading.files = false;
     renderFiles();
@@ -410,15 +466,15 @@ export async function loadFiles(folderId, resetSelection = true) {
 }
 
 export function selectVisibleFiles() {
-  for (const file of paginatedFiles(filteredFiles()).items) {
+  for (const file of filteredFiles()) {
     state.selectedFiles.add(file.relative_path);
   }
-  renderFiles();
+  syncVisibleFileSelectionUI();
 }
 
 export function clearFileSelection() {
   state.selectedFiles.clear();
-  renderFiles();
+  syncVisibleFileSelectionUI();
 }
 
 function previewCandidates() {
@@ -498,13 +554,13 @@ export function selectSubdir(subdir) {
   state.currentSubdir = subdir;
   state.filePage = 1;
   ensureExpandedForCurrentSubdir();
-  renderFiles();
+  void loadFiles(state.selectedFolderId, false);
 }
 
 export function resetCurrentSubdir() {
   state.currentSubdir = "";
   state.filePage = 1;
-  renderFiles();
+  void loadFiles(state.selectedFolderId, false);
 }
 
 export function toggleDirectoryCollapse(path) {

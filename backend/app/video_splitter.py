@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import TEMP_SEGMENTS_DIR
+from .file_utils import is_telegram_previewable_video
 
 
 @dataclass
@@ -30,7 +31,9 @@ class VideoSplitter:
         duration = self._probe_duration(source_path)
         segment_count = max(2, math.ceil(file_size / target_bytes))
         segment_seconds = max(1.0, duration / segment_count)
-        output_pattern = task_dir / f"{source_path.stem}.%02d{source_path.suffix.lower() or '.mp4'}"
+        is_previewable = is_telegram_previewable_video(source_path)
+        output_suffix = ".mp4" if is_previewable else (source_path.suffix.lower() or ".mkv")
+        output_pattern = task_dir / f"{source_path.stem}.%02d{output_suffix}"
         command = [
             "ffmpeg",
             "-hide_banner",
@@ -39,27 +42,52 @@ class VideoSplitter:
             "-y",
             "-i",
             str(source_path),
-            "-map",
-            "0",
-            "-c",
-            "copy",
-            "-f",
-            "segment",
-            "-segment_time",
-            str(segment_seconds),
-            "-reset_timestamps",
-            "1",
-            "-segment_format",
-            "mp4",
-            "-segment_format_options",
-            "movflags=+faststart",
-            str(output_pattern),
         ]
+        if is_previewable:
+            command.extend(
+                [
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "0:a?",
+                    "-sn",
+                    "-dn",
+                    "-c",
+                    "copy",
+                    "-f",
+                    "segment",
+                    "-segment_time",
+                    str(segment_seconds),
+                    "-reset_timestamps",
+                    "1",
+                    "-segment_format",
+                    "mp4",
+                    "-segment_format_options",
+                    "movflags=+faststart",
+                    str(output_pattern),
+                ]
+            )
+        else:
+            command.extend(
+                [
+                    "-map",
+                    "0",
+                    "-c",
+                    "copy",
+                    "-f",
+                    "segment",
+                    "-segment_time",
+                    str(segment_seconds),
+                    "-reset_timestamps",
+                    "1",
+                    str(output_pattern),
+                ]
+            )
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "ffmpeg split failed")
 
-        segments = sorted(path for path in task_dir.glob(f"{source_path.stem}.*{source_path.suffix.lower() or '.mp4'}") if path.is_file())
+        segments = sorted(path for path in task_dir.glob(f"{source_path.stem}.*{output_suffix}") if path.is_file())
         if len(segments) < 2:
             raise RuntimeError("video split produced fewer than two segments")
         oversize = next((path for path in segments if path.stat().st_size > limit_bytes), None)

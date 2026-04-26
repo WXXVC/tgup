@@ -3,10 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#071018">
+  <meta name="description" content="TG Upload Manager 控制台，统一管理 Telegram 登录、目录浏览与上传任务。">
   <title>TG Upload Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="/static/styles.css?v=__APP_ASSET_VERSION__">
 </head>
 <body>
+  <div class="app-backdrop" aria-hidden="true">
+    <div class="app-backdrop-orb app-backdrop-orb-a"></div>
+    <div class="app-backdrop-orb app-backdrop-orb-b"></div>
+    <div class="app-backdrop-grid"></div>
+  </div>
   <div id="access-screen" class="access-screen hidden">
     <form id="access-login-form" class="access-card">
       <div class="brand-mark" aria-hidden="true">TG</div>
@@ -35,7 +44,7 @@
             <span class="status-dot" aria-hidden="true"></span>
           </div>
           <strong id="login-stage">加载中</strong>
-          <span class="status-hint">会话状态实时同步</span>
+          <div id="login-meta" class="meta login-meta"></div>
           <span id="login-error" class="muted"></span>
         </div>
         <div class="status-card status-wide">
@@ -58,6 +67,7 @@
         <div class="tab-nav-head">
           <span class="label">工作区</span>
           <strong>主导航</strong>
+          <p class="tab-nav-intro muted">统一编排登录、目录扫描与上传任务的操作视图。</p>
         </div>
         <button class="tab-link active" data-tab-trigger="settings" type="button">
           <span class="tab-icon" aria-hidden="true">
@@ -103,17 +113,42 @@
 
       <div class="tab-stage">
         <section class="tab-panel active" data-tab-panel="settings">
-          <div class="subtab-nav" aria-label="设置页导航">
-            <button class="subtab-link active" data-settings-tab-trigger="access" type="button">访问密码</button>
-            <button class="subtab-link" data-settings-tab-trigger="auth" type="button">登录配置</button>
-            <button class="subtab-link" data-settings-tab-trigger="channel" type="button">频道配置</button>
-            <button class="subtab-link" data-settings-tab-trigger="folder" type="button">目录配置</button>
+          <div class="subtab-nav settings-subtab-nav" aria-label="设置页导航">
+            <button class="subtab-link active" data-settings-tab-trigger="access" type="button">
+              <span class="subtab-icon">🔐</span>
+              <span>访问密码</span>
+            </button>
+
+            <button class="subtab-link" data-settings-tab-trigger="auth" type="button">
+              <span class="subtab-icon">📱</span>
+              <span>Telegram 登录</span>
+            </button>
+            <button class="subtab-link" data-settings-tab-trigger="proxy" type="button">
+              <span class="subtab-icon">🌐</span>
+              <span>代理配置</span>
+            </button>
+            <button class="subtab-link" data-settings-tab-trigger="botapi" type="button">
+              <span class="subtab-icon">🤖</span>
+              <span>Bot API 管理</span>
+            </button>
+
+            <button class="subtab-link" data-settings-tab-trigger="channel" type="button">
+              <span class="subtab-icon">📣</span>
+              <span>频道配置</span>
+            </button>
+            <button class="subtab-link" data-settings-tab-trigger="folder" type="button">
+              <span class="subtab-icon">🗂️</span>
+              <span>目录配置</span>
+            </button>
           </div>
 
           <div class="settings-grid">
             <section class="card settings-panel active" data-settings-tab-panel="access">
               <div class="section-head">
-                <h2>访问密码</h2>
+                <div class="section-title-block">
+                  <h2>访问密码</h2>
+                  <p class="section-copy muted">配置进入控制台前的访问验证，适合在共享环境下增加额外保护。</p>
+                </div>
                 <span id="access-password-status" class="section-note"></span>
               </div>
               <form id="access-password-form" class="stack">
@@ -131,32 +166,38 @@
 
             <section class="card settings-panel" data-settings-tab-panel="auth">
               <div class="section-head">
-                <h2>Telegram 登录</h2>
+                <div class="section-title-block">
+                  <h2>Telegram 登录</h2>
+                  <p class="section-copy muted">单独维护 Telethon 凭证、登录流程和会话状态，用于 Telegram 账户接入与相关后台能力。</p>
+                </div>
                 <span class="section-note">登录态与会话自动持久化</span>
               </div>
-              <form id="api-form" class="stack">
-                <p class="form-hint">已保存参数会以脱敏形式展示；留空提交表示沿用当前已保存配置，重新填写才会覆盖。</p>
-                <label>
-                  <span>API ID</span>
-                  <input id="api-id" name="api_id" type="number" inputmode="numeric">
-                </label>
-                <label>
-                  <span>API Hash</span>
-                  <input id="api-hash" name="api_hash">
-                </label>
-                <label>
-                  <span>手机号</span>
-                  <input id="phone-number" name="phone_number">
-                </label>
-                <label>
-                  <span>上传并发数</span>
-                  <input id="upload-workers" name="upload_workers" type="number" min="1" max="4" value="1">
-                </label>
-                <div class="actions">
-                  <button id="save-api-settings" class="ghost" type="button">保存配置</button>
-                  <button type="submit">开始登录</button>
-                </div>
-              </form>
+              <div id="telethon-settings" class="stack">
+                <section class="form-section">
+                  <div class="form-section-head">
+                    <h3>凭证与会话</h3>
+                    <p id="auth-engine-hint" class="muted">当前上传引擎不会影响此处保存的 Telethon 凭证。</p>
+                  </div>
+                  <form id="api-form" class="form-grid form-grid-2">
+                    <label>
+                      <span>API ID</span>
+                      <input id="api-id" name="api_id" type="number" inputmode="numeric">
+                    </label>
+                    <label>
+                      <span>手机号</span>
+                      <input id="phone-number" name="phone_number">
+                    </label>
+                    <label class="form-grid-span-2">
+                      <span>API Hash</span>
+                      <input id="api-hash" name="api_hash">
+                    </label>
+                    <div id="telethon-login-actions" class="actions form-grid-span-2">
+                      <button id="save-api-settings" class="ghost" type="button">保存配置</button>
+                      <button type="submit">开始登录</button>
+                    </div>
+                  </form>
+                </section>
+              </div>
               <form id="code-form" class="inline-form">
                 <input id="code-input" placeholder="验证码">
                 <button type="submit">提交验证码</button>
@@ -167,130 +208,134 @@
               </form>
             </section>
 
+            <section class="card settings-panel" data-settings-tab-panel="proxy">
+              <div class="section-head">
+                <div class="section-title-block">
+                  <h2>代理配置</h2>
+                  <p class="section-copy muted">集中维护上传链路代理，支持 HTTP / SOCKS5，并根据当前自动上传策略显示作用范围。</p>
+                </div>
+                <span class="section-note">网络链路设置</span>
+              </div>
+              <form id="proxy-form" class="stack">
+                <section class="form-section">
+                  <div class="form-section-head">
+                    <h3>代理参数</h3>
+                    <p id="proxy-scope-hint" class="muted">当前代理将用于 Telethon 登录与上传连接。</p>
+                  </div>
+                  <div class="form-grid form-grid-2">
+                    <label class="toggle switch-row switch-card form-grid-span-2">
+                      <input id="proxy-enabled" type="checkbox">
+                      <span class="switch-copy">
+                        <strong>启用代理</strong>
+                        <small>关闭后会恢复直连；保存后在下次初始化 Telegram 连接时生效</small>
+                      </span>
+                    </label>
+                    <label>
+                      <span>代理类型</span>
+                      <select id="proxy-type">
+                        <option value="http">HTTP</option>
+                        <option value="socks5">SOCKS5</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>代理地址</span>
+                      <input id="proxy-host" placeholder="127.0.0.1 或 proxy.example.com">
+                    </label>
+                    <label>
+                      <span>代理端口</span>
+                      <input id="proxy-port" type="number" min="1" max="65535" value="1080">
+                    </label>
+                    <label>
+                      <span>用户名</span>
+                      <input id="proxy-username" placeholder="没有可留空">
+                    </label>
+                    <label class="form-grid-span-2">
+                      <span>密码</span>
+                      <input id="proxy-password" type="password" placeholder="没有可留空">
+                    </label>
+                    <div class="actions form-grid-span-2">
+                      <button type="submit">保存代理</button>
+                    </div>
+                  </div>
+                </section>
+              </form>
+            </section>
+
+            <section class="card wide settings-panel" data-settings-tab-panel="botapi">
+              <div class="section-head">
+                <div class="section-title-block">
+                  <h2>Bot API 管理</h2>
+                  <p class="section-copy muted">集中维护 Bot API 调度模式、默认 Bot、智能调度，以及每个 Bot 的连接和限频参数。</p>
+                </div>
+                <span class="section-note">多 Bot 调度中心</span>
+              </div>
+              <div class="section-anchor-nav">
+                <button type="button" class="ghost" data-scroll-target="botapi-section-dispatch">调度设置</button>
+                <button type="button" class="ghost" id="open-bot-api-dialog">新增账号</button>
+                <button type="button" class="ghost" data-scroll-target="botapi-section-list">账号列表</button>
+              </div>
+              <div id="bot-api-settings" class="stack">
+                <section id="botapi-section-dispatch" class="form-section">
+                  <div class="form-section-head">
+                    <h3>调度设置</h3>
+                    <p id="bot-api-engine-hint" class="muted">这里维护的是小文件上传使用的 Bot 账号与调度配置。</p>
+                  </div>
+                  <div class="form-grid form-grid-2">
+                    <label>
+                      <span>调度模式</span>
+                      <select id="bot-dispatch-mode">
+                        <option value="single">单 Bot</option>
+                        <option value="channel_bound">按频道绑定</option>
+                        <option value="round_robin">轮询</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>默认 Bot</span>
+                      <select id="default-bot-api-account"></select>
+                    </label>
+                    <label class="toggle switch-row switch-card form-grid-span-2">
+                      <input id="smart-queue-scheduling-enabled" type="checkbox">
+                      <span class="switch-copy">
+                        <strong>启用智能调度</strong>
+                        <small>当队首任务绑定的 Bot 正在限频等待时，允许跳过它，先执行后面可立即发送的任务。</small>
+                      </span>
+                    </label>
+                    <div class="actions form-grid-span-2">
+                      <button id="save-bot-dispatch" class="ghost" type="button">保存调度设置</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section id="botapi-section-list" class="form-section">
+                  <div class="form-section-head">
+                    <h3>账号列表</h3>
+                    <p class="muted">展示所有 Bot 账号、运行时额度和自动降速状态。</p>
+                  </div>
+                  <div id="bot-api-account-list" class="list settings-card-grid"></div>
+                </section>
+              </div>
+            </section>
+
             <section class="card settings-panel" data-settings-tab-panel="channel">
               <div class="section-head">
-                <h2>频道配置</h2>
-              </div>
-              <form id="channel-form" class="stack">
-                <input id="channel-id" type="hidden">
-                <label>
-                  <span>频道名称</span>
-                  <input id="channel-name" required>
-                </label>
-                <label>
-                  <span>频道标识</span>
-                  <input id="channel-target" placeholder="@channel_name 或 -100..." required>
-                </label>
-                <label class="toggle switch-row">
-                  <input id="channel-enabled" type="checkbox" checked>
-                  <span class="switch-copy">
-                    <strong>启用频道</strong>
-                    <small>关闭后该频道不会参与上传</small>
-                  </span>
-                </label>
-                <div class="actions">
-                  <button type="submit">保存频道</button>
-                  <button type="button" id="channel-reset" class="ghost">清空</button>
+                <div class="section-title-block">
+                  <h2>频道配置</h2>
+                  <p class="section-copy muted">管理上传目标频道，定义每个频道的启用状态与 Telegram 标识。</p>
                 </div>
-              </form>
-              <div id="channel-list" class="list"></div>
+                <button id="open-channel-dialog" type="button">新增频道</button>
+              </div>
+              <div id="channel-list" class="list settings-card-grid"></div>
             </section>
 
             <section class="card wide settings-panel" data-settings-tab-panel="folder">
               <div class="section-head">
-                <h2>监控目录配置</h2>
-              </div>
-              <form id="folder-form" class="folder-form">
-                <input id="folder-id" type="hidden">
-                <label>
-                  <span>名称</span>
-                  <input id="folder-name" required>
-                </label>
-                <label>
-                  <span>路径</span>
-                  <input id="folder-path" placeholder="F:\media\movies 或 /media/movies" required>
-                </label>
-                <label>
-                  <span>目标频道</span>
-                  <select id="folder-channel" required></select>
-                </label>
-                <label>
-                  <span>扫描频率(秒)</span>
-                  <input id="folder-interval" type="number" min="5" max="3600" value="30" required>
-                </label>
-                <label>
-                  <span>最小稳定时间(秒)</span>
-                  <input id="folder-min-stable-seconds" type="number" min="0" max="3600" value="30" required>
-                </label>
-                <label>
-                  <span>上传后处理</span>
-                  <select id="folder-action">
-                    <option value="keep">保留原文件</option>
-                    <option value="delete">删除原文件</option>
-                    <option value="move">移动到目标目录</option>
-                  </select>
-                </label>
-                <label>
-                  <span>移动目标路径</span>
-                  <input id="folder-move-target" placeholder="仅当处理策略为 move 时需要">
-                </label>
-                <label class="folder-form-wide">
-                  <span>排除子文件夹</span>
-                  <textarea id="folder-excluded-subdirs" rows="4" placeholder="仅影响自动扫描与立即扫描创建任务，一行一个相对子目录，如：&#10;Screens&#10;Screens/raw&#10;Samples"></textarea>
-                </label>
-                <label class="toggle switch-row">
-                  <input id="folder-auto" type="checkbox" checked>
-                  <span class="switch-copy">
-                    <strong>自动上传</strong>
-                    <small>扫描到新文件后，只有稳定达到设定秒数才会自动创建上传任务</small>
-                  </span>
-                </label>
-                <label class="toggle switch-row">
-                  <input id="folder-media-group" type="checkbox">
-                  <span class="switch-copy">
-                    <strong>媒体组上传</strong>
-                    <small>启用后，多张图片或多个视频会按 Telegram 相册样式合并上传；单个媒体组超过 10 个文件时会自动拆分</small>
-                  </span>
-                </label>
-                <label class="toggle switch-row">
-                  <input id="folder-media-group-similarity" type="checkbox">
-                  <span class="switch-copy">
-                    <strong>按文件名相似度成组</strong>
-                    <small>开启后，只有去掉扩展名后的文件名相似度达到阈值时才会走媒体组上传；自动扫描命中相似文件时会额外等待 5 秒再复检，且每组最多 10 个文件</small>
-                  </span>
-                </label>
-                <label>
-                  <span>媒体组相似度阈值(%)</span>
-                  <input id="folder-media-group-threshold" type="number" min="1" max="100" value="80">
-                </label>
-                <label class="toggle switch-row">
-                  <input id="folder-split-large-video" type="checkbox">
-                  <span class="switch-copy">
-                    <strong>超限视频自动分段上传</strong>
-                    <small>仅对超过上传上限的单个视频生效，先尝试媒体组上传，失败后自动降级为逐个单发</small>
-                  </span>
-                </label>
-                <label>
-                  <span>上传上限(MB)</span>
-                  <input id="folder-upload-limit" type="number" min="100" max="4096" value="2048">
-                </label>
-                <label>
-                  <span>分段目标大小(MB)</span>
-                  <input id="folder-segment-target" type="number" min="100" max="4096" value="1900">
-                </label>
-                <label class="toggle switch-row">
-                  <input id="folder-enabled" type="checkbox" checked>
-                  <span class="switch-copy">
-                    <strong>启用目录</strong>
-                    <small>关闭后该目录不会被扫描或处理</small>
-                  </span>
-                </label>
-                <div class="actions">
-                  <button type="submit">保存目录</button>
-                  <button type="button" id="folder-reset" class="ghost">清空</button>
+                <div class="section-title-block">
+                  <h2>监控目录配置</h2>
+                  <p class="section-copy muted">定义扫描策略、上传限制、分组规则与上传后处理，构建自动化入库流程。</p>
                 </div>
-              </form>
-              <div id="folder-list" class="list"></div>
+                <button id="open-folder-dialog" type="button">新增目录</button>
+              </div>
+              <div id="folder-list" class="list settings-card-grid"></div>
             </section>
           </div>
         </section>
@@ -298,7 +343,10 @@
         <section class="tab-panel" data-tab-panel="files">
           <section class="card wide file-browser-card">
             <div class="section-head section-head-compact file-browser-head">
-              <h2>目录浏览与手动上传</h2>
+              <div class="section-title-block">
+                <h2>目录浏览与手动上传</h2>
+                <p class="section-copy muted">筛选待处理文件、查看目录层级，并将选中文件直接推送到上传队列。</p>
+              </div>
             </div>
             <div class="toolbar dense toolbar-compact file-toolbar">
               <select id="file-columns">
@@ -363,50 +411,110 @@
         <section class="tab-panel" data-tab-panel="uploads">
           <section class="card wide upload-task-card">
             <div class="section-head section-head-compact upload-task-head">
-              <h2>上传任务</h2>
+              <div class="section-title-block">
+                <h2>上传任务</h2>
+                <p class="section-copy muted">集中查看上传进度、错误分类和批量操作入口，便于处理异常任务。</p>
+              </div>
             </div>
             <div class="toolbar dense toolbar-compact upload-toolbar">
               <div class="upload-toolbar-row upload-toolbar-row-filters">
-                <select id="task-columns">
-                  <option value="3" selected>每行 3 个</option>
-                  <option value="4">每行 4 个</option>
-                  <option value="5">每行 5 个</option>
-                  <option value="6">每行 6 个</option>
-                </select>
-                <select id="task-folder-filter">
-                  <option value="all">全部目录</option>
-                </select>
-                <select id="task-status-filter">
-                  <option value="all">全部状态</option>
-                  <option value="pending">未上传</option>
-                  <option value="uploading">上传中</option>
-                  <option value="uploaded">已上传</option>
-                  <option value="failed">失败</option>
-                  <option value="locked">占用中</option>
-                </select>
-                <select id="task-sort">
-                  <option value="updated_desc">最近更新</option>
-                  <option value="created_desc">最近创建</option>
-                  <option value="progress_desc">进度最高</option>
-                  <option value="name_asc">文件名 A-Z</option>
-                </select>
-                <input id="task-search" placeholder="搜索任务或错误信息">
-                <select id="upload-page-size">
-                  <option value="10" selected>每页 10 个</option>
-                  <option value="20">每页 20 个</option>
-                  <option value="50">每页 50 个</option>
-                  <option value="100">每页 100 个</option>
-                </select>
+                <label class="toolbar-field">
+                  <span>卡片</span>
+                  <select id="task-columns">
+                    <option value="3" selected>每行 3 个</option>
+                    <option value="4">每行 4 个</option>
+                    <option value="5">每行 5 个</option>
+                    <option value="6">每行 6 个</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <span>目录</span>
+                  <select id="task-folder-filter">
+                    <option value="all">全部目录</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <span>状态</span>
+                  <select id="task-status-filter">
+                    <option value="all">全部状态</option>
+                    <option value="pending">未上传</option>
+                    <option value="uploading">上传中</option>
+                    <option value="uploaded">已上传</option>
+                    <option value="failed">失败</option>
+                    <option value="locked">占用中</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <span>错误</span>
+                  <select id="task-error-filter">
+                    <option value="all">全部错误</option>
+                    <option value="rate_limit">限流</option>
+                    <option value="local_rate_limit">本地限频</option>
+                    <option value="smart_skip">智能后移</option>
+                    <option value="permission">权限</option>
+                    <option value="not_found">不存在</option>
+                    <option value="size_limit">超上限</option>
+                    <option value="format">格式</option>
+                    <option value="network">网络</option>
+                    <option value="auth">认证</option>
+                    <option value="server_error">服务端错误</option>
+                    <option value="batch_error">媒体组</option>
+                    <option value="session_error">会话</option>
+                    <option value="upload_error">上传失败</option>
+                    <option value="unknown">其他错误</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <span>调度</span>
+                  <select id="task-scheduling-filter">
+                    <option value="all">全部调度状态</option>
+                    <option value="normal">正常</option>
+                    <option value="smart_skip">智能后移</option>
+                    <option value="local_rate_limit">本地限频</option>
+                    <option value="auto_slowdown">429 自动降速</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <span>排序</span>
+                  <select id="task-sort">
+                    <option value="updated_desc">最近更新</option>
+                    <option value="created_desc">最近创建</option>
+                    <option value="progress_desc">进度最高</option>
+                    <option value="name_asc">文件名 A-Z</option>
+                  </select>
+                </label>
+                <label class="toolbar-field toolbar-field-search">
+                  <span>搜索</span>
+                  <input id="task-search" placeholder="搜索任务、路径或错误信息">
+                </label>
+                <label class="toolbar-field">
+                  <span>分页</span>
+                  <select id="upload-page-size">
+                    <option value="10" selected>每页 10 个</option>
+                    <option value="20">每页 20 个</option>
+                    <option value="50">每页 50 个</option>
+                    <option value="100">每页 100 个</option>
+                  </select>
+                </label>
               </div>
               <div class="upload-toolbar-row upload-toolbar-row-actions">
-                <button id="upload-refresh" class="ghost" type="button">刷新任务</button>
-                <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
-                <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
-                <button id="retry-selected" class="ghost" type="button">重试选中</button>
-                <button id="delete-selected" class="ghost" type="button">清理选中</button>
-                <button id="clear-finished" class="ghost caution" type="button">清理已完成</button>
-                <button id="clear-failed" class="ghost caution" type="button">清理失败/占用</button>
-                <button id="clear-all" class="ghost danger-action" type="button">清理全部</button>
+                <div class="toolbar-action-group">
+                  <span class="toolbar-group-label">列表</span>
+                  <button id="upload-refresh" class="ghost" type="button">刷新任务</button>
+                  <button id="select-visible-tasks" class="ghost" type="button">全选当前结果</button>
+                  <button id="clear-task-selection" class="ghost" type="button">清空选择</button>
+                </div>
+                <div class="toolbar-action-group">
+                  <span class="toolbar-group-label">选中项</span>
+                  <button id="retry-selected" class="ghost" type="button">重试选中</button>
+                  <button id="delete-selected" class="ghost" type="button">清理选中</button>
+                </div>
+                <div class="toolbar-action-group toolbar-action-group-warning">
+                  <span class="toolbar-group-label">批量清理</span>
+                  <button id="clear-finished" class="ghost caution" type="button">清理已完成</button>
+                  <button id="clear-failed" class="ghost caution" type="button">清理失败/占用</button>
+                  <button id="clear-all" class="ghost danger-action" type="button">清理全部</button>
+                </div>
               </div>
             </div>
             <div id="upload-feedback" class="panel-feedback hidden"></div>
@@ -442,6 +550,352 @@
       </div>
     </div>
     <div id="task-detail-body"></div>
+  </dialog>
+
+  <dialog id="channel-dialog" class="form-dialog">
+    <div class="dialog-toolbar">
+      <strong id="channel-dialog-title">新增频道</strong>
+      <button id="channel-dialog-close" class="preview-close" type="button">关闭</button>
+    </div>
+    <div class="dialog-admin-layout">
+      <aside class="dialog-sidepanel">
+        <div class="dialog-sidepanel-copy">
+          <strong>频道配置</strong>
+          <p class="muted">按后台管理面板方式分组编辑频道信息、调度绑定与启用状态。</p>
+        </div>
+        <div class="dialog-subnav vertical">
+          <button type="button" class="ghost" data-scroll-target="channel-section-basic">基础信息</button>
+          <button type="button" class="ghost" data-scroll-target="channel-section-dispatch">调度与状态</button>
+        </div>
+      </aside>
+      <div class="dialog-content">
+        <form id="channel-form" class="stack dialog-form">
+          <input id="channel-id" type="hidden">
+          <section id="channel-section-basic" class="form-section">
+            <div class="form-section-head">
+              <h3>基础信息</h3>
+              <p class="muted">维护频道展示名称与 Telegram 目标标识。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label>
+                <span>频道名称</span>
+                <input id="channel-name" required>
+              </label>
+              <label>
+                <span>频道标识</span>
+                <input id="channel-target" placeholder="@channel_name 或 -100..." required>
+              </label>
+            </div>
+          </section>
+
+          <section id="channel-section-dispatch" class="form-section">
+            <div class="form-section-head">
+              <h3>调度与状态</h3>
+              <p class="muted">可选绑定指定 Bot，并控制频道是否启用。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label id="channel-bot-binding-field">
+                <span>绑定 Bot</span>
+                <select id="channel-bot-api-account">
+                  <option value="">未绑定 / 由默认策略决定</option>
+                </select>
+              </label>
+              <label class="toggle switch-row switch-card">
+                <input id="channel-enabled" type="checkbox" checked>
+                <span class="switch-copy">
+                  <strong>启用频道</strong>
+                  <small>关闭后该频道不会参与上传</small>
+                </span>
+              </label>
+              <div class="actions form-grid-span-2">
+                <button type="button" id="channel-setup-bound-bot" class="ghost">接入当前绑定 Bot</button>
+                <button type="button" id="channel-setup-all-bots" class="ghost">接入全部 Bot</button>
+              </div>
+              <p id="channel-setup-hint" class="muted form-grid-span-2">需要 Telethon 已登录，且当前账号对目标频道/群组拥有邀请与管理员管理权限。</p>
+            </div>
+          </section>
+
+          <div class="actions form-actions-sticky">
+            <button type="submit">保存频道</button>
+            <button type="button" id="channel-reset" class="ghost">清空</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="bot-api-dialog" class="form-dialog">
+    <div class="dialog-toolbar">
+      <strong id="bot-api-dialog-title">新增 Bot 账号</strong>
+      <button id="bot-api-dialog-close" class="preview-close" type="button">关闭</button>
+    </div>
+    <div class="dialog-admin-layout">
+      <aside class="dialog-sidepanel">
+        <div class="dialog-sidepanel-copy">
+          <strong>Bot 账号配置</strong>
+          <p class="muted">按后台管理面板方式分组维护 Bot 基础信息、限频参数与自动降速策略。</p>
+        </div>
+        <div class="dialog-subnav vertical">
+          <button type="button" class="ghost" data-scroll-target="botapi-dialog-section-basic">基础信息</button>
+          <button type="button" class="ghost" data-scroll-target="botapi-dialog-section-rate">频控与降速</button>
+          <button type="button" class="ghost" data-scroll-target="botapi-dialog-section-status">状态与测试</button>
+        </div>
+      </aside>
+      <div class="dialog-content">
+        <form id="bot-api-form" class="stack dialog-form">
+          <input id="bot-api-account-id" type="hidden">
+
+          <section id="botapi-dialog-section-basic" class="form-section">
+            <div class="form-section-head">
+              <h3>基础信息</h3>
+              <p class="muted">创建或编辑单个 Bot 账号，直接使用官方 Bot API + Token 上传 50 MB 及以下文件。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label>
+                <span>账号名称</span>
+                <input id="bot-api-account-name" placeholder="例如：Uploader Bot 1">
+              </label>
+              <label>
+                <span>上传范围</span>
+                <input value="自动负责 ≤ 50 MB 文件" disabled>
+              </label>
+              <label class="form-grid-span-2">
+                <span>Bot Token</span>
+                <input id="bot-api-token" type="password" placeholder="输入 Bot Token">
+              </label>
+            </div>
+          </section>
+
+          <section id="botapi-dialog-section-rate" class="form-section">
+            <div class="form-section-head">
+              <h3>频控与降速</h3>
+              <p class="muted">维护单 Bot 总频次、单频道频次、发送抖动和 429 自动降速策略。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label>
+                <span>上传频次限制</span>
+                <input id="bot-api-rate-limit" type="number" min="1" max="600" value="20" placeholder="20">
+                <small class="muted">默认 20 次/分钟；单文件算 1 次，一个媒体组也算 1 次。</small>
+              </label>
+              <label>
+                <span>单频道频次限制</span>
+                <input id="bot-api-channel-rate-limit" type="number" min="1" max="600" value="10" placeholder="10">
+                <small class="muted">默认 10 次/分钟；限制同一个 Bot 对同一频道的发送频率。</small>
+              </label>
+              <label>
+                <span>发送抖动最小值 (ms)</span>
+                <input id="bot-api-jitter-min" type="number" min="0" max="10000" value="300" placeholder="300">
+              </label>
+              <label>
+                <span>发送抖动最大值 (ms)</span>
+                <input id="bot-api-jitter-max" type="number" min="0" max="10000" value="1200" placeholder="1200">
+                <small class="muted">每次发送前随机等待一小段时间，降低突刺节奏。</small>
+              </label>
+              <label class="toggle switch-row switch-card">
+                <input id="bot-api-auto-slowdown-enabled" type="checkbox" checked>
+                <span class="switch-copy">
+                  <strong>启用 429 自动降速</strong>
+                  <small>命中 Telegram 限流后，临时收紧该 Bot 的限频配置。</small>
+                </span>
+              </label>
+              <label>
+                <span>自动降速系数 (%)</span>
+                <input id="bot-api-auto-slowdown-factor" type="number" min="10" max="100" value="50" placeholder="50">
+              </label>
+              <label class="form-grid-span-2">
+                <span>自动降速持续时间 (秒)</span>
+                <input id="bot-api-auto-slowdown-duration" type="number" min="30" max="86400" value="600" placeholder="600">
+              </label>
+            </div>
+          </section>
+
+          <section id="botapi-dialog-section-status" class="form-section">
+            <div class="form-section-head">
+              <h3>状态与测试</h3>
+              <p class="muted">控制 Bot 是否参与调度，并可在保存后直接测试连接可用性。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label class="toggle switch-row switch-card">
+                <input id="bot-api-enabled" type="checkbox" checked>
+                <span class="switch-copy">
+                  <strong>启用该账号</strong>
+                  <small>关闭后该 Bot 不参与调度</small>
+                </span>
+              </label>
+              <div class="form-grid-span-2 actions">
+                <button id="test-bot-api-connection" class="ghost" type="button">测试当前账号</button>
+                <button id="reset-bot-api-account" class="ghost" type="button">清空</button>
+                <button type="submit">保存账号</button>
+              </div>
+              <p id="bot-api-test-result" class="muted form-grid-span-2"></p>
+            </div>
+          </section>
+        </form>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="bot-setup-result-dialog">
+    <div class="dialog-toolbar">
+      <strong id="bot-setup-result-title">Bot 接入结果</strong>
+      <button id="bot-setup-result-close" class="preview-close" type="button">关闭</button>
+    </div>
+    <div class="stack">
+      <p id="bot-setup-result-summary" class="muted"></p>
+      <div id="bot-setup-result-body" class="detail-subtask-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="folder-dialog" class="form-dialog">
+    <div class="dialog-toolbar">
+      <strong id="folder-dialog-title">新增目录</strong>
+      <button id="folder-dialog-close" class="preview-close" type="button">关闭</button>
+    </div>
+    <div class="dialog-admin-layout">
+      <aside class="dialog-sidepanel">
+        <div class="dialog-sidepanel-copy">
+          <strong>目录配置</strong>
+          <p class="muted">左侧快速定位分组，右侧集中维护扫描、上传策略与上传限制参数。</p>
+        </div>
+        <div class="dialog-subnav vertical">
+          <button type="button" class="ghost" data-scroll-target="folder-section-basic">基础信息</button>
+          <button type="button" class="ghost" data-scroll-target="folder-section-scan">扫描与处理</button>
+          <button type="button" class="ghost" data-scroll-target="folder-section-upload">上传策略</button>
+          <button type="button" class="ghost" data-scroll-target="folder-section-engine">上传限制</button>
+        </div>
+      </aside>
+      <div class="dialog-content">
+        <form id="folder-form" class="folder-form dialog-form">
+          <input id="folder-id" type="hidden">
+
+          <section id="folder-section-basic" class="form-section folder-form-wide">
+            <div class="form-section-head">
+              <h3>基础信息</h3>
+              <p class="muted">定义目录名称、路径和目标频道。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label>
+                <span>名称</span>
+                <input id="folder-name" required>
+              </label>
+              <label>
+                <span>目标频道</span>
+                <select id="folder-channel" required></select>
+              </label>
+              <label class="form-grid-span-2">
+                <span>路径</span>
+                <input id="folder-path" placeholder="F:\media\movies 或 /media/movies" required>
+              </label>
+            </div>
+          </section>
+
+          <section id="folder-section-scan" class="form-section folder-form-wide">
+            <div class="form-section-head">
+              <h3>扫描与处理</h3>
+              <p class="muted">控制扫描频率、稳定时间和上传后处理行为。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label>
+                <span>扫描频率(秒)</span>
+                <input id="folder-interval" type="number" min="5" max="3600" value="30" required>
+              </label>
+              <label>
+                <span>最小稳定时间(秒)</span>
+                <input id="folder-min-stable-seconds" type="number" min="0" max="3600" value="30" required>
+              </label>
+              <label>
+                <span>上传后处理</span>
+                <select id="folder-action">
+                  <option value="keep">保留原文件</option>
+                  <option value="delete">删除原文件</option>
+                  <option value="move">移动到目标目录</option>
+                </select>
+              </label>
+              <label>
+                <span>移动目标路径</span>
+                <input id="folder-move-target" placeholder="仅当处理策略为 move 时需要">
+              </label>
+              <label class="form-grid-span-2">
+                <span>排除子文件夹</span>
+                <textarea id="folder-excluded-subdirs" rows="4" placeholder="仅影响自动扫描与立即扫描创建任务，一行一个相对子目录，如：&#10;Screens&#10;Screens/raw&#10;Samples"></textarea>
+              </label>
+            </div>
+          </section>
+
+          <section id="folder-section-upload" class="form-section folder-form-wide">
+            <div class="form-section-head">
+              <h3>上传策略</h3>
+              <p class="muted">维护自动上传、媒体组和大文件分段上传相关参数。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label class="toggle switch-row switch-card">
+                <input id="folder-auto" type="checkbox" checked>
+                <span class="switch-copy">
+                  <strong>自动上传</strong>
+                  <small>扫描到新文件后，只有稳定达到设定秒数才会自动创建上传任务</small>
+                </span>
+              </label>
+              <label class="toggle switch-row switch-card">
+                <input id="folder-enabled" type="checkbox" checked>
+                <span class="switch-copy">
+                  <strong>启用目录</strong>
+                  <small>关闭后该目录不会被扫描或处理</small>
+                </span>
+              </label>
+              <label class="toggle switch-row switch-card">
+                <input id="folder-media-group" type="checkbox">
+                <span class="switch-copy">
+                  <strong>媒体组上传</strong>
+                  <small>启用后，多张图片或多个视频会按 Telegram 相册样式合并上传；单个媒体组超过 10 个文件时会自动拆分</small>
+                </span>
+              </label>
+              <label class="toggle switch-row switch-card">
+                <input id="folder-media-group-similarity" type="checkbox">
+                <span class="switch-copy">
+                  <strong>按文件名相似度成组</strong>
+                  <small>开启后，只有去掉扩展名后的文件名相似度达到阈值时才会走媒体组上传；自动扫描命中相似文件时会额外等待 5 秒再复检，且每组最多 10 个文件</small>
+                </span>
+              </label>
+              <label class="toggle switch-row switch-card">
+                <input id="folder-split-large-video" type="checkbox">
+                <span class="switch-copy">
+                  <strong>超限视频自动分段上传</strong>
+                  <small>仅对超过上传上限的单个视频生效，先尝试媒体组上传，失败后自动降级为逐个单发</small>
+                </span>
+              </label>
+              <label>
+                <span>媒体组相似度阈值(%)</span>
+                <input id="folder-media-group-threshold" type="number" min="1" max="100" value="80">
+              </label>
+            </div>
+          </section>
+
+          <section id="folder-section-engine" class="form-section folder-form-wide">
+            <div class="form-section-head">
+              <h3>上传限制</h3>
+              <p class="muted">上传上限和分段目标会受到当前自动上传策略约束。</p>
+            </div>
+            <div class="form-grid form-grid-2">
+              <label>
+                <span>上传上限(MB)</span>
+                <input id="folder-upload-limit" type="number" min="100" max="4096" value="2048">
+              </label>
+              <label>
+                <span>分段目标大小(MB)</span>
+                <input id="folder-segment-target" type="number" min="100" max="4096" value="1900">
+              </label>
+              <p id="folder-upload-limit-hint" class="muted form-grid-span-2">当前自动上传策略会决定可设置的最大上传上限。</p>
+              <p id="folder-engine-warning" class="warning-text form-grid-span-2 hidden"></p>
+            </div>
+          </section>
+
+          <div class="actions folder-form-wide form-actions-sticky">
+            <button type="submit">保存目录</button>
+            <button type="button" id="folder-reset" class="ghost">清空</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </dialog>
 
   <script type="module" src="/static/app.js?v=__APP_ASSET_VERSION__"></script>

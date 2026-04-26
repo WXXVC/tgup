@@ -1,6 +1,9 @@
 from __future__ import annotations
 import mimetypes
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from .models import UploadStatus
@@ -55,6 +58,52 @@ def is_album_eligible(path: Path, max_file_size_bytes: int = ALBUM_MAX_FILE_SIZE
 
 def is_streamable_video(path: Path) -> bool:
     return path.suffix.lower() in STREAMABLE_VIDEO_EXTENSIONS
+
+
+def probe_video_stream(path: Path) -> dict | None:
+    if not shutil.which("ffprobe"):
+        return None
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=format_name:stream=codec_type,codec_name",
+        "-of",
+        "json",
+        str(path),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    video_stream = next(
+        (
+            stream
+            for stream in payload.get("streams", [])
+            if stream.get("codec_type") == "video"
+        ),
+        None,
+    )
+    if not video_stream:
+        return None
+    return {
+        "format_name": str(payload.get("format", {}).get("format_name") or "").lower(),
+        "codec_name": str(video_stream.get("codec_name") or "").lower(),
+    }
+
+
+def is_telegram_previewable_video(path: Path) -> bool:
+    if path.suffix.lower() != ".mp4":
+        return False
+    stream = probe_video_stream(path)
+    if not stream:
+        return False
+    codec_name = stream.get("codec_name", "")
+    return codec_name in {"h264", "mpeg4"}
 
 
 def is_previewable_audio(path: Path) -> bool:

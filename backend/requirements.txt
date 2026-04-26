@@ -4,3 +4,6 @@ telethon==1.41.1
 hachoir==3.3.0
 pydantic==2.11.7
 python-multipart==0.0.20
+PySocks==1.7.1
+httpx==0.28.1
+socksio==1.0.0
