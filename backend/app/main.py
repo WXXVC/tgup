@@ -205,13 +205,30 @@ async def get_settings():
 
 
 def build_bot_api_settings_payload() -> dict:
-    settings_payload = settings_service.public_settings()
+    accounts = [
+        {
+            "id": account.id,
+            "name": account.name,
+            "server_url": account.server_url,
+            "bot_token": settings_service._mask_secret(account.bot_token),
+            "bot_token_saved": bool(account.bot_token),
+            "enabled": account.enabled,
+            "send_rate_limit_per_minute": account.send_rate_limit_per_minute,
+            "send_rate_limit_per_channel_per_minute": account.send_rate_limit_per_channel_per_minute,
+            "send_jitter_min_ms": account.send_jitter_min_ms,
+            "send_jitter_max_ms": account.send_jitter_max_ms,
+            "auto_slowdown_enabled": account.auto_slowdown_enabled,
+            "auto_slowdown_factor_percent": account.auto_slowdown_factor_percent,
+            "auto_slowdown_duration_seconds": account.auto_slowdown_duration_seconds,
+        }
+        for account in settings_service.list_bot_api_accounts()
+    ]
     return {
-        "accounts": settings_payload.get("bot_api_accounts", []),
+        "accounts": accounts,
         "bot_api_runtime_status": bot_api_pool.status(),
-        "bot_dispatch_mode": settings_payload.get("bot_dispatch_mode", "single"),
-        "default_bot_api_account_id": settings_payload.get("default_bot_api_account_id", ""),
-        "smart_queue_scheduling_enabled": settings_payload.get("smart_queue_scheduling_enabled", False),
+        "bot_dispatch_mode": settings_service.settings.bot_dispatch_mode.value,
+        "default_bot_api_account_id": settings_service.settings.default_bot_api_account_id,
+        "smart_queue_scheduling_enabled": settings_service.settings.smart_queue_scheduling_enabled,
     }
 
 
