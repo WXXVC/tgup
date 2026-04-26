@@ -226,7 +226,11 @@ export async function loadSettings() {
   state.ui.loading.settings = true;
   state.ui.errors.settings = "";
   if (!state.settings) {
-    renderSettings();
+    if (state.activeTab === "settings") {
+      renderSettings();
+    } else {
+      renderSettingsLite();
+    }
   }
   try {
     const payload = await api("/api/settings");
@@ -247,7 +251,11 @@ export async function loadSettings() {
   } finally {
     state.ui.loading.settings = false;
     if (shouldRenderAfterLoad) {
-      renderSettings();
+      if (state.activeTab === "settings") {
+        renderSettings();
+      } else {
+        renderSettingsLite();
+      }
     }
   }
 }
@@ -263,6 +271,38 @@ export function applyBotApiSettings(payload = {}) {
     hydrateForm: shouldHydrateSettingsForm("botApi"),
   });
   window.dispatchEvent(new CustomEvent("layout:topbar-sync"));
+}
+
+function renderSettingsLite() {
+  const { settings, login } = state;
+  if (!settings) return;
+
+  const browserFolderOptions = `<option value="">请选择目录</option>${settings.folders
+    .map((folder) => `<option value="${folder.id}" ${folder.id === state.selectedFolderId ? "selected" : ""}>${escapeHtml(folder.name)}</option>`)
+    .join("")}`;
+  if (browserFolderOptions !== settingsMarkupCache.browserFolderOptions) {
+    setHtmlIfChanged("browser-folder", browserFolderOptions);
+    settingsMarkupCache.browserFolderOptions = browserFolderOptions;
+  }
+  document.getElementById("browser-folder").value = state.selectedFolderId || "";
+
+  const taskFolderFilterOptions = `<option value="all">全部目录</option>${settings.folders
+    .map((folder) => `<option value="${folder.id}" ${folder.id === state.taskFolderFilter ? "selected" : ""}>${escapeHtml(folder.name)}</option>`)
+    .join("")}`;
+  if (taskFolderFilterOptions !== settingsMarkupCache.taskFolderFilterOptions) {
+    setHtmlIfChanged("task-folder-filter", taskFolderFilterOptions);
+    settingsMarkupCache.taskFolderFilterOptions = taskFolderFilterOptions;
+  }
+  document.getElementById("task-folder-filter").value = state.taskFolderFilter || "all";
+
+  if (login) {
+    setText(
+      "login-stage",
+      `${statusLabel(login.stage)} / ${login.engine === "hybrid" ? "自动混合模式" : (login.engine === "bot_api" ? "Bot API" : "Telethon")}`,
+    );
+    renderLoginMeta(login);
+    setText("login-error", state.ui.errors.settings || login.last_error || "");
+  }
 }
 
 export function renderSettings() {

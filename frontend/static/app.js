@@ -22,6 +22,7 @@ import {
   fillFolderForm,
   applyBotApiSettings,
   loadSettings,
+  renderSettings,
   resetChannelForm,
   resetBotApiAccountForm,
   resetFolderForm,
@@ -369,6 +370,11 @@ async function setActiveTab(tab, options = {}) {
   renderAccessScreen();
   refreshPolling();
   if (state.access.enabled && !state.access.authorized) {
+    return;
+  }
+  if (tab === "settings" && state.settings) {
+    renderSettingsTabs();
+    renderSettings();
     return;
   }
   if (tab === "uploads") {
