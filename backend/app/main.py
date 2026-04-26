@@ -772,10 +772,10 @@ async def delete_upload_batch(payload: UploadDeleteBatchRequest):
 @app.delete("/api/uploads/clear")
 async def clear_uploads(scope: str = Query("finished")):
     if scope == "failed":
-        count = upload_repo.clear_tasks([UploadStatus.FAILED, UploadStatus.LOCKED])
+        count = upload_repo.clear_tasks([UploadStatus.FAILED, UploadStatus.LOCKED, UploadStatus.STABILIZING])
     elif scope == "finished":
         count = upload_repo.clear_tasks(
-            [UploadStatus.UPLOADED, UploadStatus.FAILED, UploadStatus.LOCKED]
+            [UploadStatus.UPLOADED, UploadStatus.FAILED, UploadStatus.LOCKED, UploadStatus.STABILIZING]
         )
     elif scope == "all":
         stats = upload_repo.stats()
@@ -789,6 +789,7 @@ async def clear_uploads(scope: str = Query("finished")):
                 UploadStatus.UPLOADED,
                 UploadStatus.FAILED,
                 UploadStatus.LOCKED,
+                UploadStatus.STABILIZING,
             ]
         )
     else:

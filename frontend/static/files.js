@@ -200,6 +200,7 @@ function renderFileStats(files) {
     pending: 0,
     uploaded: 0,
     locked: 0,
+    stabilizing: 0,
   };
 
   const markup = `
@@ -207,6 +208,7 @@ function renderFileStats(files) {
     <div class="stat-card"><strong>${stats.pending}</strong><span>未上传</span></div>
     <div class="stat-card"><strong>${stats.uploaded}</strong><span>已上传</span></div>
     <div class="stat-card"><strong>${stats.locked}</strong><span>占用中</span></div>
+    <div class="stat-card"><strong>${stats.stabilizing || 0}</strong><span>等待稳定</span></div>
     <div class="stat-card"><strong>${state.selectedFiles.size}</strong><span>已选中</span></div>
   `;
   if (markup !== lastFileStatsMarkup) {

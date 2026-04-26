@@ -40,6 +40,7 @@ function emptyStats() {
     uploaded: 0,
     failed: 0,
     locked: 0,
+    stabilizing: 0,
     upload_speed_bytes: 0,
   };
 }
@@ -128,6 +129,10 @@ function renderUploadStats() {
       <strong>${stats.pending}</strong>
       <span>待处理</span>
     </article>
+    <article class="top-stat-card">
+      <strong>${stats.stabilizing || 0}</strong>
+      <span>等待稳定</span>
+    </article>
     <article class="top-stat-card is-danger">
       <strong>${stats.failed}</strong>
       <span>失败</span>
@@ -209,6 +214,9 @@ function taskCompletionText(task) {
   }
   if (task.status === "locked") {
     return "文件占用中";
+  }
+  if (task.status === "stabilizing") {
+    return "文件等待稳定";
   }
   if (task.status === "pending") {
     return "等待上传";
@@ -606,7 +614,7 @@ export async function retrySelectedUploads() {
 
 export function selectVisibleTasks() {
   const eligible = state.uploads
-    .filter((task) => ["pending", "uploading", "failed", "locked", "uploaded"].includes(task.status))
+    .filter((task) => ["pending", "uploading", "failed", "locked", "stabilizing", "uploaded"].includes(task.status))
     .map((task) => task.id);
   state.selectedUploadTaskIds = new Set(eligible);
   syncVisibleTaskSelectionUI();

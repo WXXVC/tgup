@@ -57,7 +57,7 @@ class FolderScanner:
             relative = str(file_path.relative_to(root)).replace("\\", "/")
             active_keys.add((folder_id, relative))
             uploaded = self.upload_repo.is_uploaded(folder_id, relative, stat.st_size, stat.st_mtime)
-            locked = False if uploaded else self.is_file_unavailable(folder_id, path, file_path, min_stable_seconds)
+            unavailable_reason = "" if uploaded else self.file_unavailable_reason(folder_id, path, file_path, min_stable_seconds)
             entries.append(
                 FileEntry(
                     relative_path=relative,
@@ -65,7 +65,7 @@ class FolderScanner:
                     file_type=classify_file(file_path),
                     size=stat.st_size,
                     modified_at=stat.st_mtime,
-                    status=derive_status(uploaded, locked),
+                    status=derive_status(uploaded, unavailable_reason),
                 )
             )
         self._prune_stability_snapshots(folder_id, active_keys)
@@ -100,7 +100,7 @@ class FolderScanner:
             active_keys.add((folder_id, relative))
             stat = file_path.stat()
             uploaded = self.upload_repo.is_uploaded(folder_id, relative, stat.st_size, stat.st_mtime)
-            locked = False if uploaded else self.is_file_unavailable(folder_id, path, file_path, min_stable_seconds)
+            unavailable_reason = "" if uploaded else self.file_unavailable_reason(folder_id, path, file_path, min_stable_seconds)
             entries.append(
                 FileEntry(
                     relative_path=relative,
@@ -108,7 +108,7 @@ class FolderScanner:
                     file_type=classify_file(file_path),
                     size=stat.st_size,
                     modified_at=stat.st_mtime,
-                    status=derive_status(uploaded, locked),
+                    status=derive_status(uploaded, unavailable_reason),
                 )
             )
         self._prune_stability_snapshots(folder_id, active_keys)
@@ -166,7 +166,7 @@ class FolderScanner:
                 if db_available
                 else False
             )
-            locked = False if uploaded else self.is_file_unavailable(
+            unavailable_reason = "" if uploaded else self.file_unavailable_reason(
                 folder_id, path, file_path, min_stable_seconds
             )
             return FileEntry(
@@ -175,7 +175,7 @@ class FolderScanner:
                 file_type=classify_file(file_path),
                 size=stat.st_size,
                 modified_at=stat.st_mtime,
-                status=derive_status(uploaded, locked),
+                status=derive_status(uploaded, unavailable_reason),
             )
 
         entries: list[FileEntry] = []
@@ -300,7 +300,7 @@ class FolderScanner:
                 if db_available
                 else False
             )
-            locked = False if uploaded else self.is_file_unavailable(
+            unavailable_reason = "" if uploaded else self.file_unavailable_reason(
                 folder_id, path, file_path, min_stable_seconds
             )
             return FileEntry(
@@ -309,7 +309,7 @@ class FolderScanner:
                 file_type=classify_file(file_path),
                 size=stat.st_size,
                 modified_at=stat.st_mtime,
-                status=derive_status(uploaded, locked),
+                status=derive_status(uploaded, unavailable_reason),
             )
 
         def matches(entry: FileEntry) -> bool:
@@ -356,6 +356,8 @@ class FolderScanner:
                 stats.uploaded += 1
             elif entry_status == "locked":
                 stats.locked += 1
+            elif entry_status == "stabilizing":
+                stats.stabilizing += 1
             if start_index <= (total_items - 1) < end_index:
                 page_entries.append(entry)
 
@@ -574,6 +576,7 @@ class FolderScanner:
             pending=sum(1 for item in entries if str(item.status) == "UploadStatus.PENDING" or getattr(item.status, "value", "") == "pending"),
             uploaded=sum(1 for item in entries if str(item.status) == "UploadStatus.UPLOADED" or getattr(item.status, "value", "") == "uploaded"),
             locked=sum(1 for item in entries if str(item.status) == "UploadStatus.LOCKED" or getattr(item.status, "value", "") == "locked"),
+            stabilizing=sum(1 for item in entries if str(item.status) == "UploadStatus.STABILIZING" or getattr(item.status, "value", "") == "stabilizing"),
         )
 
     def paginate_files(
@@ -598,9 +601,14 @@ class FolderScanner:
         )
 
     def is_file_unavailable(self, folder_id: str, folder_path: str, file_path: Path, min_stable_seconds: int = 0) -> bool:
+        return self.file_unavailable_reason(folder_id, folder_path, file_path, min_stable_seconds) != ""
+
+    def file_unavailable_reason(self, folder_id: str, folder_path: str, file_path: Path, min_stable_seconds: int = 0) -> str:
         if file_is_locked(file_path):
-            return True
-        return not self.is_file_stable(folder_id, folder_path, file_path, min_stable_seconds)
+            return "locked"
+        if not self.is_file_stable(folder_id, folder_path, file_path, min_stable_seconds):
+            return "stabilizing"
+        return ""
 
     def is_file_stable(self, folder_id: str, folder_path: str, file_path: Path, min_stable_seconds: int = 0) -> bool:
         if min_stable_seconds <= 0:

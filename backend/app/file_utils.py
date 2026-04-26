@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import subprocess
+import os
 from pathlib import Path
 
 from .models import UploadStatus
@@ -136,15 +137,21 @@ def build_caption(root: Path, file_path: Path) -> str:
 
 def file_is_locked(path: Path) -> bool:
     try:
-        with open(path, "rb+"):
-            return False
+        if os.name == "nt":
+            with open(path, "rb+"):
+                return False
+        else:
+            with open(path, "rb"):
+                return False
     except OSError:
         return True
 
 
-def derive_status(is_uploaded: bool, is_locked_flag: bool) -> UploadStatus:
-    if is_locked_flag:
+def derive_status(is_uploaded: bool, unavailable_reason: str = "") -> UploadStatus:
+    if unavailable_reason == "locked":
         return UploadStatus.LOCKED
+    if unavailable_reason == "stabilizing":
+        return UploadStatus.STABILIZING
     if is_uploaded:
         return UploadStatus.UPLOADED
     return UploadStatus.PENDING

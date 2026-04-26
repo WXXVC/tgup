@@ -501,21 +501,22 @@ class UploadManager:
                     ),
                 )
                 return
-            unavailable_path = self._find_unavailable_path(folder, task, paths)
+            unavailable_path, unavailable_reason = self._find_unavailable_path(folder, task, paths)
             if unavailable_path:
                 reason = (
-                    f"文件被占用：{unavailable_path.name}"
-                    if file_is_locked(unavailable_path)
-                    else f"文件仍在写入，等待稳定：{unavailable_path.name}"
+                    f"file is locked: {unavailable_path.name}"
+                    if unavailable_reason == "locked"
+                    else f"file is still changing: {unavailable_path.name}"
                 )
+                target_status = UploadStatus.LOCKED if unavailable_reason == "locked" else UploadStatus.STABILIZING
                 self.upload_repo.update_task(
                     task.id,
-                    status=UploadStatus.LOCKED,
+                    status=target_status,
                     progress=0,
                     completed_count=0,
                     error_message=reason,
                     batch_items=self._build_batch_items(
-                        self._task_display_items(task), UploadStatus.LOCKED, reason, 0
+                        self._task_display_items(task), target_status, reason, 0
                     ),
                 )
                 self._schedule_locked_retry(task, folder, unavailable_path)
@@ -656,18 +657,19 @@ class UploadManager:
         folder: FolderConfig,
         task: UploadTask,
         paths: list[Path],
-    ) -> Path | None:
+    ) -> tuple[Path | None, str]:
         manual_task = task.id in self._manual_task_ids
         for path in paths:
             if file_is_locked(path):
-                return path
+                return path, "locked"
             if manual_task:
                 continue
-            if self.scanner.is_file_unavailable(
+            unavailable_reason = self.scanner.file_unavailable_reason(
                 task.folder_id, folder.path, path, folder.min_stable_seconds
-            ):
-                return path
-        return None
+            )
+            if unavailable_reason:
+                return path, unavailable_reason
+        return None, ""
 
     def _schedule_locked_retry(
         self,
@@ -689,7 +691,7 @@ class UploadManager:
         try:
             await asyncio.sleep(delay)
             task = self.upload_repo.get_task(task_id)
-            if not task or task.status != UploadStatus.LOCKED:
+            if not task or task.status not in {UploadStatus.LOCKED, UploadStatus.STABILIZING}:
                 return
             await self.retry_task(task_id)
         except asyncio.CancelledError:

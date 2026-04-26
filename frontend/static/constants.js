@@ -4,6 +4,7 @@
   uploaded: "已上传",
   failed: "失败",
   locked: "占用中",
+  stabilizing: "等待稳定",
   enabled: "启用",
   disabled: "禁用",
   logged_out: "未登录",
@@ -20,8 +21,8 @@ export const FILE_TYPE_LABELS = {
   other: "其他",
 };
 
-export const TASK_STATUS_ORDER = ["uploading", "pending", "failed", "locked", "uploaded"];
-export const RETRYABLE_TASK_STATUSES = new Set(["failed", "locked"]);
-export const TERMINAL_TASK_STATUSES = new Set(["failed", "locked", "uploaded"]);
+export const TASK_STATUS_ORDER = ["uploading", "pending", "stabilizing", "failed", "locked", "uploaded"];
+export const RETRYABLE_TASK_STATUSES = new Set(["failed", "locked", "stabilizing"]);
+export const TERMINAL_TASK_STATUSES = new Set(["failed", "locked", "stabilizing", "uploaded"]);
 export const TOAST_DURATION_MS = 2600;
 export const SEARCH_DEBOUNCE_MS = 220;

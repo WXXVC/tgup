@@ -20,6 +20,7 @@ class UploadStatus(str, Enum):
     UPLOADED = "uploaded"
     FAILED = "failed"
     LOCKED = "locked"
+    STABILIZING = "stabilizing"
 
 
 class PostUploadAction(str, Enum):
@@ -220,6 +221,7 @@ class FileListStats(BaseModel):
     pending: int = 0
     uploaded: int = 0
     locked: int = 0
+    stabilizing: int = 0
 
 
 class FileListPagination(BaseModel):
@@ -289,6 +291,7 @@ class UploadStats(BaseModel):
     uploaded: int = 0
     failed: int = 0
     locked: int = 0
+    stabilizing: int = 0
     upload_speed_bytes: float = 0.0
 
 

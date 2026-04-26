@@ -32,6 +32,7 @@ class UploadRepository:
         UploadStatus.PENDING.value,
         UploadStatus.UPLOADING.value,
         UploadStatus.LOCKED.value,
+        UploadStatus.STABILIZING.value,
     }
 
     def __init__(self) -> None:
@@ -444,6 +445,8 @@ class UploadRepository:
                 stats.uploaded = row["count"]
             elif key == "locked":
                 stats.locked = row["count"]
+            elif key == "stabilizing":
+                stats.stabilizing = row["count"]
         items = [
             FileEntry(
                 relative_path=row["relative_path"],
@@ -524,7 +527,7 @@ class UploadRepository:
         search: str,
         sort: str,
     ) -> list[UploadTask]:
-        status_rank = {name: index for index, name in enumerate(["uploading", "pending", "failed", "locked", "uploaded"])}
+        status_rank = {name: index for index, name in enumerate(["uploading", "pending", "stabilizing", "failed", "locked", "uploaded"])}
         normalized_search = search.strip().lower()
         items = []
         for task in tasks:
