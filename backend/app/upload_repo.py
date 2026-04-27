@@ -377,6 +377,42 @@ class UploadRepository:
         except sqlite3.Error:
             return False
 
+    def get_uploaded_records(
+        self,
+        folder_id: str,
+        relative_paths: list[str],
+    ) -> dict[str, tuple[int, float]]:
+        normalized_paths = [
+            str(item or "").strip().replace("\\", "/")
+            for item in (relative_paths or [])
+            if str(item or "").strip()
+        ]
+        if not folder_id or not normalized_paths:
+            return {}
+        records: dict[str, tuple[int, float]] = {}
+        try:
+            with get_connection() as connection:
+                chunk_size = 500
+                for start in range(0, len(normalized_paths), chunk_size):
+                    chunk = normalized_paths[start : start + chunk_size]
+                    placeholders = ", ".join("?" for _ in chunk)
+                    rows = connection.execute(
+                        f"""
+                        SELECT relative_path, file_size, modified_at
+                        FROM uploaded_files
+                        WHERE folder_id = ? AND relative_path IN ({placeholders})
+                        """,
+                        tuple([folder_id, *chunk]),
+                    ).fetchall()
+                    for row in rows:
+                        records[str(row["relative_path"])] = (
+                            int(row["file_size"]),
+                            float(row["modified_at"]),
+                        )
+        except sqlite3.Error:
+            return {}
+        return records
+
     def mark_uploaded(
         self,
         folder_id: str,
@@ -583,6 +619,56 @@ class UploadRepository:
         except sqlite3.Error:
             return
 
+    def file_index_count(self, folder_id: str) -> int:
+        if not folder_id:
+            return 0
+        try:
+            with get_connection() as connection:
+                row = connection.execute(
+                    "SELECT COUNT(*) AS count FROM file_index WHERE folder_id = ?",
+                    (folder_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            return 0
+        return int((row["count"] if row else 0) or 0)
+
+    def file_index_summary(self, folder_id: str) -> dict[str, float | int]:
+        if not folder_id:
+            return {"count": 0, "last_seen_at": 0.0}
+        try:
+            with get_connection() as connection:
+                row = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count, COALESCE(MAX(last_seen_at), 0) AS last_seen_at
+                    FROM file_index
+                    WHERE folder_id = ?
+                    """,
+                    (folder_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            return {"count": 0, "last_seen_at": 0.0}
+        return {
+            "count": int((row["count"] if row else 0) or 0),
+            "last_seen_at": float((row["last_seen_at"] if row else 0.0) or 0.0),
+        }
+
+    def delete_stale_file_index_entries(
+        self,
+        folder_id: str,
+        older_than: float,
+    ) -> None:
+        if not folder_id:
+            return
+        try:
+            with get_connection() as connection:
+                connection.execute(
+                    "DELETE FROM file_index WHERE folder_id = ? AND last_seen_at < ?",
+                    (folder_id, float(older_than)),
+                )
+                connection.commit()
+        except sqlite3.Error:
+            return
+
     def query_file_index(
         self,
         *,
@@ -691,6 +777,43 @@ class UploadRepository:
             end=min(offset + page_size, total_items),
         )
         return items, stats, pagination, total_all, total_items
+
+    def query_file_index_tree(
+        self,
+        *,
+        folder_id: str,
+        subdir: str = "",
+    ) -> list[dict[str, object]]:
+        if not folder_id:
+            return []
+        normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        conditions = ["folder_id = ?"]
+        params: list[Any] = [folder_id]
+        if normalized_subdir:
+            conditions.append("(parent_dir = ? OR parent_dir LIKE ?)")
+            params.extend([normalized_subdir, f"{normalized_subdir}/%"])
+        where_sql = " AND ".join(conditions)
+        try:
+            with get_connection() as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT parent_dir, COUNT(*) AS file_count
+                    FROM file_index
+                    WHERE {where_sql}
+                    GROUP BY parent_dir
+                    ORDER BY parent_dir COLLATE NOCASE ASC
+                    """,
+                    tuple(params),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [
+            {
+                "parent_dir": str(row["parent_dir"] or ""),
+                "file_count": int(row["file_count"] or 0),
+            }
+            for row in rows
+        ]
 
     def has_active_task_for_file(self, folder_id: str, relative_path: str) -> bool:
         normalized_path = str(relative_path or "").strip().replace("\\", "/")

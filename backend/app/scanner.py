@@ -53,6 +53,57 @@ class FolderScanner:
         self._directory_tree_cache: dict[str, DirectoryTreeCacheEntry] = {}
         self._directory_tree_view_cache: dict[tuple[str, str], DirectoryTreeCacheEntry] = {}
 
+    def _build_entries_for_paths(
+        self,
+        folder_id: str,
+        root: Path,
+        base_path: str,
+        file_paths: list[Path],
+        min_stable_seconds: int = 0,
+        *,
+        db_available: bool = True,
+        active_keys: set[tuple[str, str]] | None = None,
+    ) -> list[FileEntry]:
+        if not file_paths:
+            return []
+        stats_by_path: dict[str, os.stat_result] = {}
+        relative_paths: list[str] = []
+        for file_path in file_paths:
+            stat = file_path.stat()
+            relative = str(file_path.relative_to(root)).replace("\\", "/")
+            stats_by_path[relative] = stat
+            relative_paths.append(relative)
+            if active_keys is not None:
+                active_keys.add((folder_id, relative))
+        uploaded_records = (
+            self.upload_repo.get_uploaded_records(folder_id, relative_paths)
+            if db_available
+            else {}
+        )
+        entries: list[FileEntry] = []
+        for file_path, relative in zip(file_paths, relative_paths):
+            stat = stats_by_path[relative]
+            uploaded_record = uploaded_records.get(relative)
+            uploaded = bool(
+                uploaded_record
+                and uploaded_record[0] == stat.st_size
+                and float(uploaded_record[1]) == float(stat.st_mtime)
+            )
+            unavailable_reason = "" if uploaded else self.file_unavailable_reason(
+                folder_id, base_path, file_path, min_stable_seconds
+            )
+            entries.append(
+                FileEntry(
+                    relative_path=relative,
+                    absolute_path=str(file_path),
+                    file_type=classify_file(file_path),
+                    size=stat.st_size,
+                    modified_at=stat.st_mtime,
+                    status=derive_status(uploaded, unavailable_reason),
+                )
+            )
+        return entries
+
     def list_files(self, folder_id: str, path: str, min_stable_seconds: int = 0) -> list[FileEntry]:
         cache_key = (folder_id, str(Path(path)), int(min_stable_seconds or 0))
         now = time.time()
@@ -65,22 +116,17 @@ class FolderScanner:
             return []
         entries: list[FileEntry] = []
         active_keys: set[tuple[str, str]] = set()
-        for file_path in sorted([item for item in root.rglob("*") if item.is_file()]):
-            stat = file_path.stat()
-            relative = str(file_path.relative_to(root)).replace("\\", "/")
-            active_keys.add((folder_id, relative))
-            uploaded = self.upload_repo.is_uploaded(folder_id, relative, stat.st_size, stat.st_mtime)
-            unavailable_reason = "" if uploaded else self.file_unavailable_reason(folder_id, path, file_path, min_stable_seconds)
-            entries.append(
-                FileEntry(
-                    relative_path=relative,
-                    absolute_path=str(file_path),
-                    file_type=classify_file(file_path),
-                    size=stat.st_size,
-                    modified_at=stat.st_mtime,
-                    status=derive_status(uploaded, unavailable_reason),
-                )
+        file_paths = sorted([item for item in root.rglob("*") if item.is_file()])
+        entries.extend(
+            self._build_entries_for_paths(
+                folder_id,
+                root,
+                path,
+                file_paths,
+                min_stable_seconds,
+                active_keys=active_keys,
             )
+        )
         self._prune_stability_snapshots(folder_id, active_keys)
         copied_entries = [item.model_copy() for item in entries]
         self._file_list_cache[cache_key] = FileListCacheEntry(
@@ -106,24 +152,22 @@ class FolderScanner:
         }
         entries: list[FileEntry] = []
         active_keys: set[tuple[str, str]] = set()
+        selected_paths: list[Path] = []
         for file_path in sorted([item for item in root.rglob("*") if item.is_file()]):
             relative = str(file_path.relative_to(root)).replace("\\", "/")
             if self._is_excluded(relative, excluded):
                 continue
-            active_keys.add((folder_id, relative))
-            stat = file_path.stat()
-            uploaded = self.upload_repo.is_uploaded(folder_id, relative, stat.st_size, stat.st_mtime)
-            unavailable_reason = "" if uploaded else self.file_unavailable_reason(folder_id, path, file_path, min_stable_seconds)
-            entries.append(
-                FileEntry(
-                    relative_path=relative,
-                    absolute_path=str(file_path),
-                    file_type=classify_file(file_path),
-                    size=stat.st_size,
-                    modified_at=stat.st_mtime,
-                    status=derive_status(uploaded, unavailable_reason),
-                )
+            selected_paths.append(file_path)
+        entries.extend(
+            self._build_entries_for_paths(
+                folder_id,
+                root,
+                path,
+                selected_paths,
+                min_stable_seconds,
+                active_keys=active_keys,
             )
+        )
         self._prune_stability_snapshots(folder_id, active_keys)
         return entries
 
@@ -169,34 +213,12 @@ class FolderScanner:
             selected_dirs = top_level_dirs[cursor:end]
             next_cursor = 0 if end >= total_subdirs else end
 
-        def build_entry(file_path: Path) -> FileEntry:
-            stat = file_path.stat()
-            relative = str(file_path.relative_to(root)).replace("\\", "/")
-            uploaded = (
-                self.upload_repo.is_uploaded(
-                    folder_id, relative, stat.st_size, stat.st_mtime
-                )
-                if db_available
-                else False
-            )
-            unavailable_reason = "" if uploaded else self.file_unavailable_reason(
-                folder_id, path, file_path, min_stable_seconds
-            )
-            return FileEntry(
-                relative_path=relative,
-                absolute_path=str(file_path),
-                file_type=classify_file(file_path),
-                size=stat.st_size,
-                modified_at=stat.st_mtime,
-                status=derive_status(uploaded, unavailable_reason),
-            )
-
-        entries: list[FileEntry] = []
+        selected_paths: list[Path] = []
         for file_path in root_files:
             relative = str(file_path.relative_to(root)).replace("\\", "/")
             if self._is_excluded(relative, excluded):
                 continue
-            entries.append(build_entry(file_path))
+            selected_paths.append(file_path)
         for top_dir in selected_dirs:
             for current_dir, dir_names, file_names in os.walk(top_dir):
                 dir_names.sort(key=str.casefold)
@@ -207,7 +229,15 @@ class FolderScanner:
                     relative = str(file_path.relative_to(root)).replace("\\", "/")
                     if self._is_excluded(relative, excluded):
                         continue
-                    entries.append(build_entry(file_path))
+                    selected_paths.append(file_path)
+        entries = self._build_entries_for_paths(
+            folder_id,
+            root,
+            path,
+            selected_paths,
+            min_stable_seconds,
+            db_available=db_available,
+        )
         return entries, next_cursor, total_subdirs
 
     def build_caption(self, folder_path: str, absolute_path: str) -> str:
@@ -330,28 +360,6 @@ class FolderScanner:
                 for file_name in file_names:
                     yield current_path / file_name
 
-        def build_entry(file_path: Path) -> FileEntry:
-            stat = file_path.stat()
-            relative = str(file_path.relative_to(root)).replace("\\", "/")
-            uploaded = (
-                self.upload_repo.is_uploaded(
-                    folder_id, relative, stat.st_size, stat.st_mtime
-                )
-                if db_available
-                else False
-            )
-            unavailable_reason = "" if uploaded else self.file_unavailable_reason(
-                folder_id, path, file_path, min_stable_seconds
-            )
-            return FileEntry(
-                relative_path=relative,
-                absolute_path=str(file_path),
-                file_type=classify_file(file_path),
-                size=stat.st_size,
-                modified_at=stat.st_mtime,
-                status=derive_status(uploaded, unavailable_reason),
-            )
-
         def matches(entry: FileEntry) -> bool:
             entry_type = (
                 entry.file_type.value if hasattr(entry.file_type, "value") else str(entry.file_type)
@@ -377,8 +385,17 @@ class FolderScanner:
         start_index = (page - 1) * page_size
         end_index = start_index + page_size
         active_keys: set[tuple[str, str]] = set()
-        for file_path in iter_file_paths():
-            entry = build_entry(file_path)
+        file_paths = list(iter_file_paths())
+        built_entries = self._build_entries_for_paths(
+            folder_id,
+            root,
+            path,
+            file_paths,
+            min_stable_seconds,
+            db_available=db_available,
+            active_keys=active_keys,
+        )
+        for entry in built_entries:
             active_keys.add((folder_id, entry.relative_path))
             if normalized_scope == "direct":
                 index_entries.append(entry)
@@ -436,6 +453,57 @@ class FolderScanner:
             total_all=total_in_scope,
         )
         return page_entries, stats, pagination, total_in_scope
+
+    def build_file_index(
+        self,
+        folder_id: str,
+        path: str,
+        *,
+        min_stable_seconds: int = 0,
+        batch_size: int = 500,
+    ) -> int:
+        root = Path(path)
+        if not root.exists() or not root.is_dir():
+            return 0
+        started_at = time.time()
+        batch: list[Path] = []
+        indexed_count = 0
+        active_keys: set[tuple[str, str]] = set()
+        for current_dir, dir_names, file_names in os.walk(root):
+            dir_names.sort(key=str.casefold)
+            file_names.sort(key=str.casefold)
+            current_path = Path(current_dir)
+            for file_name in file_names:
+                batch.append(current_path / file_name)
+                if len(batch) >= batch_size:
+                    entries = self._build_entries_for_paths(
+                        folder_id,
+                        root,
+                        path,
+                        batch,
+                        min_stable_seconds,
+                        db_available=True,
+                        active_keys=active_keys,
+                    )
+                    self.upload_repo.upsert_file_index_entries(folder_id, entries)
+                    indexed_count += len(entries)
+                    batch = []
+        if batch:
+            entries = self._build_entries_for_paths(
+                folder_id,
+                root,
+                path,
+                batch,
+                min_stable_seconds,
+                db_available=True,
+                active_keys=active_keys,
+            )
+            self.upload_repo.upsert_file_index_entries(folder_id, entries)
+            indexed_count += len(entries)
+        self.upload_repo.delete_stale_file_index_entries(folder_id, started_at)
+        self._prune_stability_snapshots(folder_id, active_keys)
+        self.invalidate_file_list_cache(folder_id)
+        return indexed_count
 
     def filter_files(
         self,
@@ -559,6 +627,8 @@ class FolderScanner:
         self,
         path: str,
         subdir: str = "",
+        *,
+        folder_id: str = "",
     ) -> list[FileTreeNode]:
         root = Path(path)
         if not root.exists() or not root.is_dir():
@@ -570,6 +640,16 @@ class FolderScanner:
         cached = self._directory_tree_view_cache.get(cache_key)
         if cached and (now - cached.cached_at) <= self.DIRECTORY_TREE_VIEW_CACHE_SECONDS:
             return [item.model_copy() for item in cached.nodes]
+        if folder_id and self.upload_repo.file_index_count(folder_id) > 0:
+            indexed_nodes = self._build_directory_tree_for_view_from_index(
+                folder_id,
+                normalized_subdir,
+            )
+            self._directory_tree_view_cache[cache_key] = DirectoryTreeCacheEntry(
+                cached_at=now,
+                nodes=[item.model_copy() for item in indexed_nodes],
+            )
+            return [item.model_copy() for item in indexed_nodes]
         focus_parts = [part for part in normalized_subdir.split("/") if part] if normalized_subdir else []
         prefixes = []
         current = ""
@@ -625,6 +705,65 @@ class FolderScanner:
             cached_at=now,
             nodes=[item.model_copy() for item in nodes_list],
         )
+        return nodes_list
+
+    def _build_directory_tree_for_view_from_index(
+        self,
+        folder_id: str,
+        subdir: str = "",
+    ) -> list[FileTreeNode]:
+        normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
+        rows = self.upload_repo.query_file_index_tree(
+            folder_id=folder_id,
+            subdir=normalized_subdir,
+        )
+        focus_parts = [part for part in normalized_subdir.split("/") if part] if normalized_subdir else []
+        prefixes: list[str] = []
+        current = ""
+        for part in focus_parts:
+            current = f"{current}/{part}" if current else part
+            prefixes.append(current)
+
+        nodes: dict[str, FileTreeNode] = {}
+
+        def ensure_node(relative_path: str) -> None:
+            relative_path = str(relative_path or "").replace("\\", "/").strip("/")
+            if not relative_path:
+                return
+            parts = relative_path.split("/")
+            name = parts[-1]
+            parent = "/".join(parts[:-1])
+            if relative_path not in nodes:
+                nodes[relative_path] = FileTreeNode(
+                    path=relative_path,
+                    name=name,
+                    count=0,
+                    depth=relative_path.count("/"),
+                    parent=parent,
+                    children=[],
+                )
+            if parent:
+                ensure_node(parent)
+                if relative_path not in nodes[parent].children:
+                    nodes[parent].children.append(relative_path)
+
+        for prefix in prefixes:
+            ensure_node(prefix)
+
+        for row in rows:
+            parent_dir = str(row.get("parent_dir") or "").strip("/")
+            file_count = int(row.get("file_count") or 0)
+            if parent_dir:
+                ensure_node(parent_dir)
+                nodes[parent_dir].count += file_count
+            parts = [part for part in parent_dir.split("/") if part] if parent_dir else []
+            for index in range(len(parts) - 1):
+                ancestor = "/".join(parts[: index + 1])
+                ensure_node(ancestor)
+        nodes_list = [
+            nodes[key].model_copy(update={"children": sorted(nodes[key].children)})
+            for key in sorted(nodes)
+        ]
         return nodes_list
 
     def summarize_files(self, entries: list[FileEntry]) -> FileListStats:

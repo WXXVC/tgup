@@ -105,14 +105,14 @@ function resolveRouteAfterAccess() {
       pushRoute("/login", { replace: true });
       return true;
     }
-    pushRoute("/dir", { replace: true });
-    syncTabWithRoute("/dir");
+    pushRoute("/setting", { replace: true });
+    syncTabWithRoute("/setting");
     return false;
   }
 
   if (!state.access.enabled && currentPath === "/login") {
-    pushRoute("/dir", { replace: true });
-    syncTabWithRoute("/dir");
+    pushRoute("/setting", { replace: true });
+    syncTabWithRoute("/setting");
     return false;
   }
 
@@ -122,8 +122,8 @@ function resolveRouteAfterAccess() {
   }
 
   if (!requiresLogin && currentPath === "/login") {
-    pushRoute("/dir", { replace: true });
-    syncTabWithRoute("/dir");
+    pushRoute("/setting", { replace: true });
+    syncTabWithRoute("/setting");
     return false;
   }
 
@@ -624,8 +624,8 @@ function wireEvents() {
       });
       document.getElementById("access-login-password").value = "";
       state.access.authorized = true;
-      pushRoute("/dir", { replace: true });
-      syncTabWithRoute("/dir");
+      pushRoute("/setting", { replace: true });
+      syncTabWithRoute("/setting");
       renderTabs();
       renderAccessScreen();
       await refreshDashboard();

@@ -102,6 +102,15 @@ export function filteredFiles() {
   return state.files;
 }
 
+function formatIndexTime(timestamp) {
+  if (!timestamp) return "未建立";
+  try {
+    return new Date(timestamp * 1000).toLocaleString();
+  } catch {
+    return "未建立";
+  }
+}
+
 function visibleDirectoryNodes(nodes) {
   const byParent = new Map();
   nodes.forEach((node) => {
@@ -222,7 +231,10 @@ function updateFileSelectionDependentUI(files, pageItems) {
   const summary = document.getElementById("file-summary");
   if (summary) {
     const filteredTotal = state.filePagination?.total_items ?? files.length;
-    const nextSummaryText = `共 ${state.fileTotalAll} 个文件，筛选后 ${filteredTotal} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个`;
+    const indexMeta = state.fileIndexing
+      ? `索引构建中`
+      : `索引 ${state.fileIndexedFiles || 0} 条，更新时间 ${formatIndexTime(state.fileLastIndexedAt)}`;
+    const nextSummaryText = `共 ${state.fileTotalAll} 个文件，筛选后 ${filteredTotal} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个 · ${indexMeta}`;
     if (nextSummaryText !== lastFileSummaryText) {
       summary.textContent = nextSummaryText;
       lastFileSummaryText = nextSummaryText;
@@ -387,14 +399,27 @@ export function renderFiles() {
   renderDirectoryTree();
   renderFileStats(files);
   renderFilePagination(pagination);
-  setPanelFeedback("file-feedback", {
-    visible: files.length === 0,
-    tone: "empty",
-    title: "当前筛选下没有文件",
-    message: state.fileTotalAll ? "可以尝试清空筛选、切换目录或重新扫描。" : "这个目录暂时没有可展示的文件。",
-    actionLabel: "立即扫描",
-    actionId: "retry-scan-files",
-  });
+  if (state.fileIndexing) {
+    setPanelFeedback("file-feedback", {
+      visible: true,
+      tone: "info",
+      title: "正在构建文件索引",
+      message: state.fileIndexingScheduled
+        ? "后台已开始建立目录索引，稍后刷新即可查看文件。"
+        : "目录索引仍在构建中，请稍后再刷新。",
+      actionLabel: "刷新列表",
+      actionId: "retry-files",
+    });
+  } else {
+    setPanelFeedback("file-feedback", {
+      visible: files.length === 0,
+      tone: "empty",
+      title: "当前筛选下没有文件",
+      message: state.fileTotalAll ? "可以尝试清空筛选、切换目录或重新扫描。" : "这个目录暂时没有可展示的文件。",
+      actionLabel: "立即扫描",
+      actionId: "retry-scan-files",
+    });
+  }
   updateFileSelectionDependentUI(files, pageItems);
   const listMarkup = files.length
     ? pageItems.map((file) => renderFileCard(file)).join("")
@@ -407,6 +432,26 @@ export function renderFiles() {
   initOverflowMarquee(document.getElementById("file-current-path"));
 }
 
+async function waitForIndexReady(folderId, attempts = 8, delayMs = 1500) {
+  for (let index = 0; index < attempts; index += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+    if (state.selectedFolderId !== folderId) {
+      return false;
+    }
+    try {
+      const payload = await api(`/api/folders/${folderId}/index-status`);
+      state.fileIndexedFiles = Number(payload.indexed_files || 0);
+      state.fileLastIndexedAt = Number(payload.last_indexed_at || 0);
+      if (!payload.indexing && Number(payload.indexed_files || 0) > 0) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 export async function loadFiles(folderId, resetSelection = true) {
   const requestToken = ++state.requests.fileListToken;
   if (!folderId) {
@@ -416,6 +461,10 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.fileTreeNodes = [];
     state.fileStats = null;
     state.fileTotalAll = 0;
+    state.fileIndexing = false;
+    state.fileIndexingScheduled = false;
+    state.fileIndexedFiles = 0;
+    state.fileLastIndexedAt = 0;
     state.filePagination = {
       page: 1,
       page_size: 10,
@@ -462,8 +511,27 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.fileStats = payload.stats || null;
     state.filePagination = payload.pagination || state.filePagination;
     state.fileTotalAll = payload.total_all || 0;
+    state.fileIndexing = !!payload.indexing;
+    state.fileIndexingScheduled = !!payload.indexing_scheduled;
+    if (!payload.indexing) {
+      state.fileIndexedFiles = Number(payload.total_all || 0);
+      try {
+        const indexStatus = await api(`/api/folders/${folderId}/index-status`);
+        state.fileIndexedFiles = Number(indexStatus.indexed_files || state.fileIndexedFiles || 0);
+        state.fileLastIndexedAt = Number(indexStatus.last_indexed_at || 0);
+      } catch {
+        // Ignore index metadata refresh failures and keep current list visible.
+      }
+    }
     state.filePage = payload.pagination?.page || state.filePage;
     state.filePageSize = payload.pagination?.page_size || state.filePageSize;
+    if (state.fileIndexing) {
+      const ready = await waitForIndexReady(folderId);
+      if (ready && requestToken === state.requests.fileListToken && state.selectedFolderId === folderId) {
+        await loadFiles(folderId, false);
+        return;
+      }
+    }
   } catch (error) {
     if (requestToken !== state.requests.fileListToken) {
       return;
@@ -473,6 +541,10 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.fileTreeNodes = [];
     state.fileStats = null;
     state.fileTotalAll = 0;
+    state.fileIndexing = false;
+    state.fileIndexingScheduled = false;
+    state.fileIndexedFiles = 0;
+    state.fileLastIndexedAt = 0;
   } finally {
     if (requestToken !== state.requests.fileListToken) {
       return;
@@ -488,6 +560,10 @@ export async function loadFileTree(folderId, subdir = "") {
     state.fileTreeNodes = [];
     state.ui.loading.fileTree = false;
     state.ui.errors.fileTree = "";
+    state.fileIndexing = false;
+    state.fileIndexingScheduled = false;
+    state.fileIndexedFiles = 0;
+    state.fileLastIndexedAt = 0;
     renderDirectoryTree();
     return;
   }
@@ -505,6 +581,8 @@ export async function loadFileTree(folderId, subdir = "") {
       return;
     }
     state.fileTreeNodes = payload.items || [];
+    state.fileIndexing = !!payload.indexing;
+    state.fileIndexingScheduled = !!payload.indexing_scheduled;
   } catch (error) {
     if (requestToken !== state.requests.fileTreeToken) {
       return;

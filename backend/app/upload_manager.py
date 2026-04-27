@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 class UploadManager:
+    INITIAL_SCAN_DELAY_SECONDS = 30
     SIMILARITY_RECHECK_SECONDS = 5
     TELEGRAM_MEDIA_GROUP_LIMIT = 10
     BOT_API_FILE_LIMIT_BYTES = 50 * 1024 * 1024
@@ -279,6 +280,23 @@ class UploadManager:
         return deleted
 
     async def _scanner_loop(self) -> None:
+        initial_delay = min(
+            self.INITIAL_SCAN_DELAY_SECONDS,
+            max(
+                5,
+                min(
+                    [
+                        item.scan_interval_seconds
+                        for item in self.settings_service.settings.folders
+                        if item.enabled and item.auto_upload
+                    ],
+                    default=self.INITIAL_SCAN_DELAY_SECONDS,
+                ),
+            ),
+        )
+        if initial_delay > 0:
+            logger.info("scanner_loop initial_delay_seconds=%s", initial_delay)
+            await asyncio.sleep(initial_delay)
         while True:
             now = time.time()
             for folder in self.settings_service.settings.folders:
@@ -296,10 +314,12 @@ class UploadManager:
             await asyncio.sleep(max(5, sleep_for - elapsed))
 
     async def _scan_folder(self, folder: FolderConfig) -> None:
-        pending_paths = self._list_pending_paths(folder)
-        if self._should_recheck_similarity_batches(folder, pending_paths):
+        pending_paths = await asyncio.to_thread(self._list_pending_paths, folder)
+        if await asyncio.to_thread(
+            self._should_recheck_similarity_batches, folder, pending_paths
+        ):
             await asyncio.sleep(self.SIMILARITY_RECHECK_SECONDS)
-            pending_paths = self._list_pending_paths(folder)
+            pending_paths = await asyncio.to_thread(self._list_pending_paths, folder)
         for lead_path, batch_paths, group_debug in self._build_upload_batches(
             folder, pending_paths, group_by_parent=True
         ):
@@ -1161,6 +1181,8 @@ class UploadManager:
             subdir_cursor=cursor,
             subdir_batch_size=self.SCAN_SUBDIR_BATCH_SIZE,
         )
+        if entries:
+            self.upload_repo.upsert_file_index_entries(folder.id, entries)
         persisted_cursor = next_cursor if total_subdirs > 0 else 0
         self._scan_subdir_cursors[folder.id] = persisted_cursor
         self.upload_repo.set_scan_cursor(folder.id, persisted_cursor)

@@ -20,7 +20,9 @@ from .models import (
     BotDispatchSettingsPayload,
     ChannelBotSetupRequest,
     ChannelPayload,
+    FileListPagination,
     FileListResponse,
+    FileListStats,
     FolderPayload,
     LoginCodeRequest,
     LoginStage,
@@ -61,6 +63,7 @@ _settings_summary_cache: dict[str, object] = {
     "cached_at": 0.0,
     "payload": None,
 }
+_file_index_jobs: set[str] = set()
 
 
 def configure_logging() -> None:
@@ -160,6 +163,36 @@ def frontend_asset_version() -> str:
 def invalidate_settings_summary_cache() -> None:
     _settings_summary_cache["cached_at"] = 0.0
     _settings_summary_cache["payload"] = None
+
+
+def _schedule_folder_index_build(folder_id: str, folder_path: str, min_stable_seconds: int) -> bool:
+    if not folder_id or folder_id in _file_index_jobs:
+        return False
+
+    async def runner() -> None:
+        _file_index_jobs.add(folder_id)
+        started_at = time.perf_counter()
+        try:
+            indexed_count = await asyncio.to_thread(
+                scanner.build_file_index,
+                folder_id,
+                folder_path,
+                min_stable_seconds=min_stable_seconds,
+            )
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            logger.info(
+                "file_index_build finished folder_id=%s indexed_count=%s elapsed_ms=%.1f",
+                folder_id,
+                indexed_count,
+                elapsed_ms,
+            )
+        except Exception:
+            logger.exception("file_index_build failed folder_id=%s", folder_id)
+        finally:
+            _file_index_jobs.discard(folder_id)
+
+    asyncio.create_task(runner())
+    return True
 
 
 def is_public_path(path: str) -> bool:
@@ -694,7 +727,35 @@ async def folder_files(
     if not folder:
         raise HTTPException(status_code=404, detail="folder not found")
     locate_done_at = asyncio.get_event_loop().time()
-    items, stats, pagination, total_all = scanner.list_files_paginated(
+    index_count = await asyncio.to_thread(upload_repo.file_index_count, folder.id)
+    if index_count <= 0:
+        scheduled = _schedule_folder_index_build(
+            folder.id, folder.path, folder.min_stable_seconds
+        )
+        logger.info(
+            "folder_files index_not_ready folder_id=%s scheduled=%s",
+            folder_id,
+            scheduled,
+        )
+        empty_pagination = FileListPagination(
+            page=1,
+            page_size=page_size if page_size in {10, 20, 50, 100} else 10,
+            total_pages=1,
+            total_items=0,
+            start=0,
+            end=0,
+        )
+        return {
+            "items": [],
+            "stats": FileListStats().model_dump(mode="json"),
+            "pagination": empty_pagination.model_dump(mode="json"),
+            "total_all": 0,
+            "indexing": True,
+            "indexing_scheduled": scheduled,
+            "detail": "file index is building",
+        }
+    items, stats, pagination, total_all = await asyncio.to_thread(
+        scanner.list_files_paginated,
         folder.id,
         folder.path,
         min_stable_seconds=folder.min_stable_seconds,
@@ -726,7 +787,7 @@ async def folder_files(
         stats=stats,
         pagination=pagination,
         total_all=total_all,
-    )
+    ).model_dump(mode="json") | {"indexing": False, "indexing_scheduled": False}
 
 
 @app.get("/api/folders/{folder_id}/tree")
@@ -742,7 +803,28 @@ async def folder_tree(
     if not folder:
         raise HTTPException(status_code=404, detail="folder not found")
     locate_done_at = asyncio.get_event_loop().time()
-    tree = scanner.build_directory_tree_for_view(folder.path, subdir)
+    index_count = await asyncio.to_thread(upload_repo.file_index_count, folder.id)
+    if index_count <= 0:
+        scheduled = _schedule_folder_index_build(
+            folder.id, folder.path, folder.min_stable_seconds
+        )
+        logger.info(
+            "folder_tree index_not_ready folder_id=%s scheduled=%s",
+            folder_id,
+            scheduled,
+        )
+        return {
+            "items": [],
+            "indexing": True,
+            "indexing_scheduled": scheduled,
+            "detail": "file index is building",
+        }
+    tree = await asyncio.to_thread(
+        scanner.build_directory_tree_for_view,
+        folder.path,
+        subdir,
+        folder_id=folder.id,
+    )
     tree_done_at = asyncio.get_event_loop().time()
     logger.info(
         "folder_tree folder_id=%s subdir=%s locate_ms=%.1f tree_ms=%.1f total_ms=%.1f tree_nodes=%s",
@@ -753,15 +835,40 @@ async def folder_tree(
         (tree_done_at - request_started_at) * 1000,
         len(tree),
     )
-    return {"items": tree}
+    return {"items": tree, "indexing": False, "indexing_scheduled": False}
 
 
 @app.post("/api/folders/{folder_id}/scan")
 async def scan_folder(folder_id: str):
     scanner.invalidate_file_list_cache(folder_id)
     logger.info("scan_folder queued folder_id=%s", folder_id)
+    folder = next(
+        (item for item in settings_service.settings.folders if item.id == folder_id),
+        None,
+    )
+    if folder:
+        _schedule_folder_index_build(folder.id, folder.path, folder.min_stable_seconds)
     asyncio.create_task(upload_manager.trigger_scan(folder_id))
     return {"ok": True, "queued": True}
+
+
+@app.get("/api/folders/{folder_id}/index-status")
+async def folder_index_status(folder_id: str):
+    folder = next(
+        (item for item in settings_service.settings.folders if item.id == folder_id),
+        None,
+    )
+    if not folder:
+        raise HTTPException(status_code=404, detail="folder not found")
+    summary = await asyncio.to_thread(upload_repo.file_index_summary, folder.id)
+    building = folder.id in _file_index_jobs
+    return {
+        "folder_id": folder.id,
+        "indexed_files": summary["count"],
+        "last_indexed_at": summary["last_seen_at"],
+        "indexing": building or summary["count"] <= 0,
+        "building": building,
+    }
 
 
 @app.post("/api/uploads/manual")
