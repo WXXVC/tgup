@@ -47,7 +47,7 @@ export const state = {
   filePageSize: 50,
   taskColumns: 3,
   uploadPage: 1,
-  uploadPageSize: 10,
+  uploadPageSize: 50,
   taskFolderFilter: "all",
   taskStatusFilter: "all",
   taskErrorCategoryFilter: "all",

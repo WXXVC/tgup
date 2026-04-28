@@ -134,9 +134,6 @@ export function syncUploadEngineControls() {
   codeForm?.classList.remove("hidden");
   passwordForm?.classList.remove("hidden");
   const proxyHint = document.getElementById("proxy-scope-hint");
-  if (proxyHint) {
-    proxyHint.textContent = "当前代理将同时用于官方 Bot API HTTP 通信和 Telethon 登录/大文件上传连接。";
-  }
   syncBotDispatchControls();
   syncFolderUploadLimitControls();
 }

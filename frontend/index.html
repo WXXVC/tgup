@@ -68,9 +68,7 @@
     <main class="workspace">
       <aside class="tab-nav" aria-label="主导航">
         <div class="tab-nav-head">
-          <span class="label">工作区</span>
-          <strong>主导航</strong>
-          <p class="tab-nav-intro muted">统一编排登录、目录扫描与上传任务的操作视图。</p>
+          <strong>工作区</strong>
         </div>
         <button class="tab-link active" data-tab-trigger="settings" type="button">
           <span class="tab-icon" aria-hidden="true">
@@ -110,7 +108,6 @@
           </span>
         </button>
         <div class="tab-nav-foot">
-          <span>已聚合登录、文件浏览与任务处理流程</span>
         </div>
       </aside>
 
@@ -272,18 +269,13 @@
                 </div>
                 <span class="section-note">多 Bot 调度中心</span>
               </div>
-              <div class="section-anchor-nav">
-                <button type="button" class="ghost" data-scroll-target="botapi-section-dispatch">调度设置</button>
-                <button type="button" class="ghost" id="open-bot-api-dialog">新增账号</button>
-                <button type="button" class="ghost" data-scroll-target="botapi-section-list">账号列表</button>
-              </div>
               <div id="bot-api-settings" class="stack">
-                <section id="botapi-section-dispatch" class="form-section">
+                <section id="botapi-section-dispatch" class="form-section form-section-compact">
                   <div class="form-section-head">
                     <h3>调度设置</h3>
                     <p id="bot-api-engine-hint" class="muted">这里维护的是小文件上传使用的 Bot 账号与调度配置。</p>
                   </div>
-                  <div class="form-grid form-grid-2">
+                  <div class="form-grid form-grid-2 form-grid-compact">
                     <label>
                       <span>调度模式</span>
                       <select id="bot-dispatch-mode">
@@ -311,8 +303,11 @@
 
                 <section id="botapi-section-list" class="form-section">
                   <div class="form-section-head">
-                    <h3>账号列表</h3>
-                    <p class="muted">展示所有 Bot 账号、运行时额度和自动降速状态。</p>
+                    <div>
+                      <h3>账号列表</h3>
+                      <p class="muted">展示所有 Bot 账号、运行时额度和自动降速状态。</p>
+                    </div>
+                    <button type="button" class="ghost" id="open-bot-api-dialog">新增账号</button>
                   </div>
                   <div id="bot-api-account-list" class="list settings-card-grid"></div>
                 </section>
@@ -345,53 +340,74 @@
 
         <section class="tab-panel" data-tab-panel="files">
           <section class="card wide file-browser-card">
-            <div class="section-head section-head-compact file-browser-head">
-              <div class="section-title-block">
-                <h2>目录浏览与手动上传</h2>
-                <p class="section-copy muted">筛选待处理文件、查看目录层级，并将选中文件直接推送到上传队列。</p>
+            <div class="toolbar dense toolbar-compact upload-toolbar file-toolbar">
+              <div class="upload-toolbar-row upload-toolbar-row-filters file-toolbar-row-filters">
+                <label class="toolbar-field">
+                  <select id="file-columns">
+                    <option value="3">每行 3 个</option>
+                    <option value="4" selected>每行 4 个</option>
+                    <option value="5">每行 5 个</option>
+                    <option value="6">每行 6 个</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <select id="browser-folder"></select>
+                </label>
+                <label class="toolbar-field">
+                  <select id="file-type-filter">
+                    <option value="all">全部类型</option>
+                    <option value="video">视频</option>
+                    <option value="image">图片</option>
+                    <option value="music">音乐</option>
+                    <option value="document">文档</option>
+                    <option value="other">其他</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <select id="file-status-filter">
+                    <option value="all">全部状态</option>
+                    <option value="pending">未上传</option>
+                    <option value="uploaded">已上传</option>
+                    <option value="locked">占用中</option>
+                    <option value="stabilizing">等待稳定</option>
+                  </select>
+                </label>
+                <label class="toolbar-field">
+                  <select id="file-scope-filter">
+                    <option value="direct">仅当前目录</option>
+                    <option value="recursive">包含子目录</option>
+                  </select>
+                </label>
+                <label class="toolbar-field toolbar-field-search">
+                  <input id="file-search" placeholder="搜索文件名或路径">
+                </label>
+                <label class="toolbar-field">
+                  <select id="file-page-size">
+                    <option value="50" selected>每页 50 个</option>
+                    <option value="100">每页 100 个</option>
+                    <option value="200">每页 200 个</option>
+                    <option value="500">每页 500 个</option>
+                  </select>
+                </label>
+              </div>
+              <div class="upload-toolbar-row upload-toolbar-row-actions file-toolbar-row-actions">
+                <div class="toolbar-action-group" data-file-toolbar-group="list">
+                  <span class="toolbar-group-label">列表</span>
+                  <button id="browser-refresh" class="ghost" type="button">刷新列表</button>
+                  <button id="browser-scan" class="ghost" type="button">立即扫描</button>
+                </div>
+                <div class="toolbar-action-group" data-file-toolbar-group="selection">
+                  <span class="toolbar-group-label">选择</span>
+                  <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
+                  <button id="clear-file-selection" class="ghost" type="button">清空选择</button>
+                </div>
+                <div class="toolbar-action-group toolbar-action-group-accent" data-file-toolbar-group="upload">
+                  <span class="toolbar-group-label">上传</span>
+                  <button id="browser-upload" type="button">上传选中</button>
+                  <div id="file-stats" class="file-toolbar-stats" aria-live="polite"></div>
+                </div>
               </div>
             </div>
-            <div class="toolbar dense toolbar-compact file-toolbar">
-              <select id="file-columns">
-                <option value="3">每行 3 个</option>
-                <option value="4" selected>每行 4 个</option>
-                <option value="5">每行 5 个</option>
-                <option value="6">每行 6 个</option>
-              </select>
-              <select id="browser-folder"></select>
-              <select id="file-type-filter">
-                <option value="all">全部类型</option>
-                <option value="video">视频</option>
-                <option value="image">图片</option>
-                <option value="music">音乐</option>
-                <option value="document">文档</option>
-                <option value="other">其他</option>
-              </select>
-              <select id="file-status-filter">
-                <option value="all">全部状态</option>
-                <option value="pending">未上传</option>
-                <option value="uploaded">已上传</option>
-                <option value="locked">占用中</option>
-                <option value="stabilizing">等待稳定</option>
-              </select>
-              <select id="file-scope-filter">
-                <option value="direct">仅当前目录</option>
-                <option value="recursive">包含子目录</option>
-              </select>
-              <input id="file-search" placeholder="搜索文件名或路径">
-              <select id="file-page-size">
-                <option value="50" selected>每页 50 个</option>
-                <option value="100">每页 100 个</option>
-                <option value="200">每页 200 个</option>
-                <option value="500">每页 500 个</option>
-              </select>
-              <button id="browser-refresh" class="ghost" type="button">刷新列表</button>
-              <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
-              <button id="clear-file-selection" class="ghost" type="button">清空选择</button>
-              <button id="browser-scan" class="ghost" type="button">立即扫描</button>
-              <button id="browser-upload" type="button">上传选中</button>
-            </div>
-            <div id="file-stats" class="stats-grid"></div>
             <div id="file-summary" class="muted">请选择监控目录</div>
             <div class="browser-layout">
               <aside class="browser-sidebar">
@@ -414,16 +430,9 @@
 
         <section class="tab-panel" data-tab-panel="uploads">
           <section class="card wide upload-task-card">
-            <div class="section-head section-head-compact upload-task-head">
-              <div class="section-title-block">
-                <h2>上传任务</h2>
-                <p class="section-copy muted">集中查看上传进度、错误分类和批量操作入口，便于处理异常任务。</p>
-              </div>
-            </div>
             <div class="toolbar dense toolbar-compact upload-toolbar">
               <div class="upload-toolbar-row upload-toolbar-row-filters">
                 <label class="toolbar-field">
-                  <span>卡片</span>
                   <select id="task-columns">
                     <option value="3" selected>每行 3 个</option>
                     <option value="4">每行 4 个</option>
@@ -432,13 +441,11 @@
                   </select>
                 </label>
                 <label class="toolbar-field">
-                  <span>目录</span>
                   <select id="task-folder-filter">
                     <option value="all">全部目录</option>
                   </select>
                 </label>
                 <label class="toolbar-field">
-                  <span>状态</span>
                   <select id="task-status-filter">
                     <option value="all">全部状态</option>
                     <option value="pending">未上传</option>
@@ -450,7 +457,6 @@
                   </select>
                 </label>
                 <label class="toolbar-field">
-                  <span>错误</span>
                   <select id="task-error-filter">
                     <option value="all">全部错误</option>
                     <option value="rate_limit">限流</option>
@@ -470,7 +476,6 @@
                   </select>
                 </label>
                 <label class="toolbar-field">
-                  <span>调度</span>
                   <select id="task-scheduling-filter">
                     <option value="all">全部调度状态</option>
                     <option value="normal">正常</option>
@@ -480,7 +485,6 @@
                   </select>
                 </label>
                 <label class="toolbar-field">
-                  <span>排序</span>
                   <select id="task-sort">
                     <option value="updated_desc">最近更新</option>
                     <option value="created_desc">最近创建</option>
@@ -489,11 +493,9 @@
                   </select>
                 </label>
                 <label class="toolbar-field toolbar-field-search">
-                  <span>搜索</span>
                   <input id="task-search" placeholder="搜索任务、路径或错误信息">
                 </label>
                 <label class="toolbar-field">
-                  <span>分页</span>
                   <select id="upload-page-size">
                     <option value="50" selected>每页 50 个</option>
                     <option value="100">每页 100 个</option>

@@ -81,7 +81,7 @@ class UploadRepository:
         self,
         *,
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 50,
         folder_id: str = "all",
         status: str = "all",
         error_category: str = "all",
@@ -91,7 +91,7 @@ class UploadRepository:
     ) -> UploadListResponse:
         cache_key = (
             max(1, int(page or 1)),
-            page_size if page_size in {10, 20, 50, 100} else 10,
+            page_size if page_size in {50, 100, 200, 500} else 50,
             folder_id,
             status,
             error_category,
@@ -129,7 +129,7 @@ class UploadRepository:
             search=search,
             sort=sort,
         )
-        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page_size = page_size if page_size in {50, 100, 200, 500} else 50
         total_items = len(filtered)
         total_pages = max(1, (total_items + page_size - 1) // page_size)
         page = min(max(1, page), total_pages)
@@ -163,7 +163,7 @@ class UploadRepository:
         search: str,
         sort: str,
     ) -> UploadListResponse | None:
-        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page_size = page_size if page_size in {50, 100, 200, 500} else 50
         page = max(1, page)
         conditions = []
         params: list[Any] = []
@@ -679,14 +679,14 @@ class UploadRepository:
         status: str = "all",
         search: str = "",
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 50,
     ) -> tuple[list[FileEntry], FileListStats, FileListPagination, int, int]:
         normalized_subdir = str(subdir or "").strip().replace("\\", "/").strip("/")
         normalized_scope = scope if scope in {"direct", "recursive"} else "direct"
         normalized_type = str(file_type or "all").strip().lower()
         normalized_status = str(status or "all").strip().lower()
         normalized_search = str(search or "").strip().lower()
-        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page_size = page_size if page_size in {50, 100, 200, 500} else 50
         page = max(1, page)
 
         conditions = ["folder_id = ?"]

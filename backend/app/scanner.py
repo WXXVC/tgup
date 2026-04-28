@@ -255,13 +255,13 @@ class FolderScanner:
         status: str = "all",
         search: str = "",
         page: int = 1,
-        page_size: int = 10,
+        page_size: int = 50,
     ) -> tuple[list[FileEntry], FileListStats, FileListPagination, int]:
         root = Path(path)
         if not root.exists():
             empty_pagination = FileListPagination(
                 page=1,
-                page_size=page_size if page_size in {10, 20, 50, 100} else 10,
+                page_size=page_size if page_size in {50, 100, 200, 500} else 50,
                 total_pages=1,
                 total_items=0,
                 start=0,
@@ -275,7 +275,7 @@ class FolderScanner:
         normalized_type = str(file_type or "all").strip().lower()
         normalized_status = str(status or "all").strip().lower()
         normalized_search = str(search or "").strip().lower()
-        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page_size = page_size if page_size in {50, 100, 200, 500} else 50
         page = max(1, page)
         cache_key = (
             folder_id,
@@ -776,9 +776,9 @@ class FolderScanner:
         )
 
     def paginate_files(
-        self, entries: list[FileEntry], *, page: int = 1, page_size: int = 10
+        self, entries: list[FileEntry], *, page: int = 1, page_size: int = 50
     ) -> tuple[list[FileEntry], FileListPagination]:
-        page_size = page_size if page_size in {10, 20, 50, 100} else 10
+        page_size = page_size if page_size in {50, 100, 200, 500} else 50
         total_items = len(entries)
         total_pages = max(1, (total_items + page_size - 1) // page_size)
         page = min(max(1, page), total_pages)

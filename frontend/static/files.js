@@ -243,12 +243,12 @@ function renderFileStats(files) {
   };
 
   const markup = `
-    <div class="stat-card"><strong>${stats.total}</strong><span>当前结果</span></div>
-    <div class="stat-card"><strong>${stats.pending}</strong><span>未上传</span></div>
-    <div class="stat-card"><strong>${stats.uploaded}</strong><span>已上传</span></div>
-    <div class="stat-card"><strong>${stats.locked}</strong><span>占用中</span></div>
-    <div class="stat-card"><strong>${stats.stabilizing || 0}</strong><span>等待稳定</span></div>
-    <div class="stat-card"><strong>${state.selectedFiles.size}</strong><span>已选中</span></div>
+    <span class="file-stat-pill"><strong>${stats.total}</strong><span>当前结果</span></span>
+    <span class="file-stat-pill warn"><strong>${stats.pending}</strong><span>未上传</span></span>
+    <span class="file-stat-pill success"><strong>${stats.uploaded}</strong><span>已上传</span></span>
+    <span class="file-stat-pill danger"><strong>${stats.locked}</strong><span>占用中</span></span>
+    <span class="file-stat-pill info"><strong>${stats.stabilizing || 0}</strong><span>等待稳定</span></span>
+    <span class="file-stat-pill accent"><strong>${state.selectedFiles.size}</strong><span>已选中</span></span>
   `;
   if (markup !== lastFileStatsMarkup) {
     document.getElementById("file-stats").innerHTML = markup;
@@ -317,6 +317,10 @@ function renderFilePagination(pagination) {
 }
 
 function renderFileCard(file) {
+  const modifiedDate = new Date(file.modified_at * 1000);
+  const formattedModifiedDate = Number.isNaN(modifiedDate.getTime())
+    ? "-"
+    : `${String(modifiedDate.getFullYear()).slice(-2)}/${String(modifiedDate.getMonth() + 1).padStart(2, "0")}/${String(modifiedDate.getDate()).padStart(2, "0")}`;
   return `
     <article class="file-card">
       <div class="file-card-head">
@@ -340,11 +344,7 @@ function renderFileCard(file) {
         </div>
         <div>
           <strong>修改时间</strong>
-          <span>${escapeHtml(new Date(file.modified_at * 1000).toLocaleDateString())}</span>
-        </div>
-        <div>
-          <strong>路径层级</strong>
-          ${marqueeText(file.relative_path.includes("/") ? file.relative_path.split("/").slice(0, -1).join(" / ") : "根目录")}
+          <span>${escapeHtml(formattedModifiedDate)}</span>
         </div>
       </div>
     </article>

@@ -79,6 +79,8 @@ export async function loadUploads() {
     const uploads = await api(`/api/uploads?${params.toString()}`);
     state.uploads = uploads.items || [];
     state.uploadPagination = uploads.pagination || state.uploadPagination;
+    state.uploadPage = uploads.pagination?.page || state.uploadPage;
+    state.uploadPageSize = uploads.pagination?.page_size || state.uploadPageSize;
     state.uploadTotalAll = uploads.total_all || 0;
     state.selectedUploadTaskIds = new Set(
       [...state.selectedUploadTaskIds].filter((taskId) => state.uploads.some((item) => item.id === taskId)),
@@ -540,6 +542,8 @@ export async function syncUploadProgress() {
   ]);
   state.uploads = uploads.items || [];
   state.uploadPagination = uploads.pagination || state.uploadPagination;
+  state.uploadPage = uploads.pagination?.page || state.uploadPage;
+  state.uploadPageSize = uploads.pagination?.page_size || state.uploadPageSize;
   state.uploadTotalAll = uploads.total_all || 0;
   state.uploadStats = stats;
   state.selectedUploadTaskIds = new Set(

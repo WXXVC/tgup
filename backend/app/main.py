@@ -732,7 +732,7 @@ async def delete_folder(folder_id: str):
 async def folder_files(
     folder_id: str,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=100),
+    page_size: int = Query(default=50, ge=1, le=500),
     subdir: str = Query(default=""),
     scope: str = Query(default="direct"),
     file_type: str = Query(default="all"),
@@ -759,7 +759,7 @@ async def folder_files(
         )
         empty_pagination = FileListPagination(
             page=1,
-            page_size=page_size if page_size in {10, 20, 50, 100} else 10,
+            page_size=page_size if page_size in {50, 100, 200, 500} else 50,
             total_pages=1,
             total_items=0,
             start=0,
@@ -915,7 +915,7 @@ async def manual_upload(payload: ManualUploadRequest):
 @app.get("/api/uploads")
 async def uploads(
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=100),
+    page_size: int = Query(default=50, ge=1, le=500),
     folder_id: str = Query(default="all"),
     status: str = Query(default="all"),
     error_category: str = Query(default="all"),

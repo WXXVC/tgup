@@ -267,7 +267,15 @@ function initBrowserSidebarToggle() {
     toolbarToggle = sidebarToggle.cloneNode(true);
     toolbarToggle.id = "toggle-browser-sidebar-toolbar";
     toolbarToggle.classList.remove("browser-sidebar-toggle");
-    toolbar.insertBefore(toolbarToggle, document.getElementById("browser-refresh"));
+    const refreshButton = document.getElementById("browser-refresh");
+    const selectionGroup = toolbar.querySelector('[data-file-toolbar-group="selection"]');
+    if (selectionGroup) {
+      selectionGroup.insertBefore(toolbarToggle, selectionGroup.querySelector("button"));
+    } else if (refreshButton?.parentNode) {
+      refreshButton.parentNode.insertBefore(toolbarToggle, refreshButton);
+    } else {
+      toolbar.prepend(toolbarToggle);
+    }
   }
 
   const handleToggle = () => {
