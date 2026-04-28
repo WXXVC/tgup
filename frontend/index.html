@@ -50,7 +50,10 @@
         <div class="status-card status-wide">
           <div class="status-card-head">
             <span class="label">任务总览</span>
-            <span id="global-status" class="muted" aria-live="polite"></span>
+            <div class="status-card-actions">
+              <button id="refresh-top-stats" class="ghost" type="button">刷新统计</button>
+              <span id="global-status" class="muted" aria-live="polite"></span>
+            </div>
           </div>
           <div id="top-upload-stats" class="top-stats-grid"></div>
         </div>
@@ -377,10 +380,10 @@
               </select>
               <input id="file-search" placeholder="搜索文件名或路径">
               <select id="file-page-size">
-                <option value="10" selected>每页 10 个</option>
-                <option value="20">每页 20 个</option>
-                <option value="50">每页 50 个</option>
+                <option value="50" selected>每页 50 个</option>
                 <option value="100">每页 100 个</option>
+                <option value="200">每页 200 个</option>
+                <option value="500">每页 500 个</option>
               </select>
               <button id="browser-refresh" class="ghost" type="button">刷新列表</button>
               <button id="select-visible-files" class="ghost" type="button">全选当前结果</button>
@@ -492,10 +495,10 @@
                 <label class="toolbar-field">
                   <span>分页</span>
                   <select id="upload-page-size">
-                    <option value="10" selected>每页 10 个</option>
-                    <option value="20">每页 20 个</option>
-                    <option value="50">每页 50 个</option>
+                    <option value="50" selected>每页 50 个</option>
                     <option value="100">每页 100 个</option>
+                    <option value="200">每页 200 个</option>
+                    <option value="500">每页 500 个</option>
                   </select>
                 </label>
               </div>
@@ -681,8 +684,8 @@
               </label>
               <label>
                 <span>单频道频次限制</span>
-                <input id="bot-api-channel-rate-limit" type="number" min="1" max="600" value="10" placeholder="10">
-                <small class="muted">默认 10 次/分钟；限制同一个 Bot 对同一频道的发送频率。</small>
+                <input id="bot-api-channel-rate-limit" type="number" min="1" max="600" value="15" placeholder="15">
+                <small class="muted">默认 15 次/分钟；限制同一个 Bot 对同一频道的发送频率。</small>
               </label>
               <label>
                 <span>发送抖动最小值 (ms)</span>
@@ -706,7 +709,7 @@
               </label>
               <label class="form-grid-span-2">
                 <span>自动降速持续时间 (秒)</span>
-                <input id="bot-api-auto-slowdown-duration" type="number" min="30" max="86400" value="600" placeholder="600">
+                <input id="bot-api-auto-slowdown-duration" type="number" min="30" max="86400" value="120" placeholder="120">
               </label>
             </div>
           </section>

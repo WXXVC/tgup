@@ -149,6 +149,15 @@ class BotApiClientPool:
         enabled = self.enabled_accounts()
         if not enabled:
             raise BotApiUploadError("no enabled bot api account is available")
-        index = self._round_robin_index % len(enabled)
-        self._round_robin_index = (index + 1) % len(enabled)
-        return enabled[index].id
+        ready_accounts = [
+            account
+            for account in enabled
+            if (
+                (self._clients.get(account.id).preview_wait_seconds() if self._clients.get(account.id) else 0)
+                <= 0
+            )
+        ]
+        candidates = ready_accounts or enabled
+        index = self._round_robin_index % len(candidates)
+        self._round_robin_index = (index + 1) % len(candidates)
+        return candidates[index].id

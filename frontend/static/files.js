@@ -4,6 +4,7 @@ import {
   escapeHtml,
   fileSkeleton,
   fileTypeLabel,
+  formatDateTime,
   formatBytes,
   initOverflowMarquee,
   labeledBadge,
@@ -109,6 +110,35 @@ function formatIndexTime(timestamp) {
   } catch {
     return "未建立";
   }
+}
+
+function formatScanRuntimeTime(timestamp) {
+  return timestamp ? formatDateTime(timestamp) : "未记录";
+}
+
+function buildScanRuntimeSummary(scanRuntimeStatus = null) {
+  if (!scanRuntimeStatus) {
+    return "扫描状态未同步";
+  }
+  const total = Number(scanRuntimeStatus.total_subdirs || 0);
+  const processed = Math.min(total, Number(scanRuntimeStatus.processed_subdirs || 0));
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 100;
+  const nextScanAt = Number(scanRuntimeStatus.next_scan_at || 0);
+  const lastFullAt = Number(scanRuntimeStatus.last_full_scan_at || 0);
+  const inProgress = !!scanRuntimeStatus.in_progress;
+  const scopeLabel = scanRuntimeStatus.scope === "full" ? "全量" : "分片";
+  const modeLabel = scanRuntimeStatus.mode === "manual" ? "手动" : "自动";
+  const progressText = total > 0
+    ? `本轮已扫 ${processed}/${total} 个一级子目录（${percent}%）`
+    : "本轮无需分片，目录可一次扫完";
+  const nextScanText = nextScanAt ? formatScanRuntimeTime(nextScanAt) : "未计划";
+  const lastFullText = formatScanRuntimeTime(lastFullAt);
+  const stateText = inProgress
+    ? `当前正在${modeLabel}${scopeLabel}扫描`
+    : scopeLabel === "全量"
+      ? `${modeLabel}全量扫描已结束`
+      : `${modeLabel}分片扫描暂停，等待下次自动继续`;
+  return `${stateText} · ${progressText} · 最近全量 ${lastFullText} · 下次自动 ${nextScanText}`;
 }
 
 function visibleDirectoryNodes(nodes) {
@@ -234,7 +264,8 @@ function updateFileSelectionDependentUI(files, pageItems) {
     const indexMeta = state.fileIndexing
       ? `索引构建中`
       : `索引 ${state.fileIndexedFiles || 0} 条，更新时间 ${formatIndexTime(state.fileLastIndexedAt)}`;
-    const nextSummaryText = `共 ${state.fileTotalAll} 个文件，筛选后 ${filteredTotal} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个 · ${indexMeta}`;
+    const scanMeta = buildScanRuntimeSummary(state.fileScanRuntimeStatus);
+    const nextSummaryText = `共 ${state.fileTotalAll} 个文件，筛选后 ${filteredTotal} 个，本页 ${pageItems.length} 个，已选 ${state.selectedFiles.size} 个 · ${indexMeta} · ${scanMeta}`;
     if (nextSummaryText !== lastFileSummaryText) {
       summary.textContent = nextSummaryText;
       lastFileSummaryText = nextSummaryText;
@@ -442,6 +473,7 @@ async function waitForIndexReady(folderId, attempts = 8, delayMs = 1500) {
       const payload = await api(`/api/folders/${folderId}/index-status`);
       state.fileIndexedFiles = Number(payload.indexed_files || 0);
       state.fileLastIndexedAt = Number(payload.last_indexed_at || 0);
+      state.fileScanRuntimeStatus = payload.scan_runtime_status || state.fileScanRuntimeStatus || null;
       if (!payload.indexing && Number(payload.indexed_files || 0) > 0) {
         return true;
       }
@@ -465,6 +497,7 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.fileIndexingScheduled = false;
     state.fileIndexedFiles = 0;
     state.fileLastIndexedAt = 0;
+    state.fileScanRuntimeStatus = null;
     state.filePagination = {
       page: 1,
       page_size: 10,
@@ -513,12 +546,14 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.fileTotalAll = payload.total_all || 0;
     state.fileIndexing = !!payload.indexing;
     state.fileIndexingScheduled = !!payload.indexing_scheduled;
+    state.fileScanRuntimeStatus = payload.scan_runtime_status || state.fileScanRuntimeStatus || null;
     if (!payload.indexing) {
       state.fileIndexedFiles = Number(payload.total_all || 0);
       try {
         const indexStatus = await api(`/api/folders/${folderId}/index-status`);
         state.fileIndexedFiles = Number(indexStatus.indexed_files || state.fileIndexedFiles || 0);
         state.fileLastIndexedAt = Number(indexStatus.last_indexed_at || 0);
+        state.fileScanRuntimeStatus = indexStatus.scan_runtime_status || state.fileScanRuntimeStatus || null;
       } catch {
         // Ignore index metadata refresh failures and keep current list visible.
       }
@@ -545,6 +580,7 @@ export async function loadFiles(folderId, resetSelection = true) {
     state.fileIndexingScheduled = false;
     state.fileIndexedFiles = 0;
     state.fileLastIndexedAt = 0;
+    state.fileScanRuntimeStatus = null;
   } finally {
     if (requestToken !== state.requests.fileListToken) {
       return;
@@ -564,6 +600,7 @@ export async function loadFileTree(folderId, subdir = "") {
     state.fileIndexingScheduled = false;
     state.fileIndexedFiles = 0;
     state.fileLastIndexedAt = 0;
+    state.fileScanRuntimeStatus = null;
     renderDirectoryTree();
     return;
   }
@@ -583,6 +620,7 @@ export async function loadFileTree(folderId, subdir = "") {
     state.fileTreeNodes = payload.items || [];
     state.fileIndexing = !!payload.indexing;
     state.fileIndexingScheduled = !!payload.indexing_scheduled;
+    state.fileScanRuntimeStatus = payload.scan_runtime_status || state.fileScanRuntimeStatus || null;
   } catch (error) {
     if (requestToken !== state.requests.fileTreeToken) {
       return;

@@ -165,6 +165,24 @@ def invalidate_settings_summary_cache() -> None:
     _settings_summary_cache["payload"] = None
 
 
+def _folder_scan_status(folder) -> dict[str, object]:
+    return upload_manager.get_scan_status(
+        folder.id,
+        scan_interval_seconds=folder.scan_interval_seconds,
+    )
+
+
+def _decorate_settings_folders(payload: dict) -> dict:
+    folders = []
+    for folder in payload.get("folders", []):
+        runtime_status = upload_manager.get_scan_status(
+            folder.get("id", ""),
+            scan_interval_seconds=int(folder.get("scan_interval_seconds") or 0),
+        )
+        folders.append({**folder, "scan_runtime_status": runtime_status})
+    return {**payload, "folders": folders}
+
+
 def _schedule_folder_index_build(folder_id: str, folder_path: str, min_stable_seconds: int) -> bool:
     if not folder_id or folder_id in _file_index_jobs:
         return False
@@ -241,7 +259,7 @@ async def index():
 
 @app.get("/api/settings")
 async def get_settings():
-    payload = settings_service.public_settings()
+    payload = _decorate_settings_folders(settings_service.public_settings())
     payload["bot_api_runtime_status"] = bot_api_pool.status()
     return {
         "settings": payload,
@@ -257,7 +275,9 @@ async def get_settings_summary():
     if cached_payload and (now - cached_at) <= SETTINGS_SUMMARY_CACHE_SECONDS:
         return cached_payload
     payload = {
-        "settings": settings_service.public_settings_summary(),
+        "settings": _decorate_settings_folders(
+            settings_service.public_settings_summary()
+        ),
         "login": upload_manager.current_engine_status(),
     }
     _settings_summary_cache["cached_at"] = now
@@ -752,6 +772,7 @@ async def folder_files(
             "total_all": 0,
             "indexing": True,
             "indexing_scheduled": scheduled,
+            "scan_runtime_status": _folder_scan_status(folder),
             "detail": "file index is building",
         }
     items, stats, pagination, total_all = await asyncio.to_thread(
@@ -787,7 +808,11 @@ async def folder_files(
         stats=stats,
         pagination=pagination,
         total_all=total_all,
-    ).model_dump(mode="json") | {"indexing": False, "indexing_scheduled": False}
+    ).model_dump(mode="json") | {
+        "indexing": False,
+        "indexing_scheduled": False,
+        "scan_runtime_status": _folder_scan_status(folder),
+    }
 
 
 @app.get("/api/folders/{folder_id}/tree")
@@ -817,6 +842,7 @@ async def folder_tree(
             "items": [],
             "indexing": True,
             "indexing_scheduled": scheduled,
+            "scan_runtime_status": _folder_scan_status(folder),
             "detail": "file index is building",
         }
     tree = await asyncio.to_thread(
@@ -835,7 +861,12 @@ async def folder_tree(
         (tree_done_at - request_started_at) * 1000,
         len(tree),
     )
-    return {"items": tree, "indexing": False, "indexing_scheduled": False}
+    return {
+        "items": tree,
+        "indexing": False,
+        "indexing_scheduled": False,
+        "scan_runtime_status": _folder_scan_status(folder),
+    }
 
 
 @app.post("/api/folders/{folder_id}/scan")
@@ -868,6 +899,7 @@ async def folder_index_status(folder_id: str):
         "last_indexed_at": summary["last_seen_at"],
         "indexing": building or summary["count"] <= 0,
         "building": building,
+        "scan_runtime_status": _folder_scan_status(folder),
     }
 
 

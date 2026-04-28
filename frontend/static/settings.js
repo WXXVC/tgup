@@ -2,6 +2,7 @@
 import {
   api,
   escapeHtml,
+  formatDateTime,
   labeledBadge,
   setGlobalBanner,
   setText,
@@ -41,6 +42,33 @@ function renderLoginMeta(login) {
     setHtmlIfChanged("login-meta", markup);
     settingsMarkupCache.loginMeta = markup;
   }
+}
+
+function formatScanRuntimePill(scanRuntimeStatus = {}) {
+  const total = Number(scanRuntimeStatus.total_subdirs || 0);
+  const processed = Math.min(total, Number(scanRuntimeStatus.processed_subdirs || 0));
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 100;
+  const lastFull = Number(scanRuntimeStatus.last_full_scan_at || 0);
+  const nextScanAt = Number(scanRuntimeStatus.next_scan_at || 0);
+  const inProgress = !!scanRuntimeStatus.in_progress;
+  const scope = scanRuntimeStatus.scope === "full" ? "全量" : "分片";
+  const mode = scanRuntimeStatus.mode === "manual" ? "手动" : "自动";
+  const lastFullText = lastFull ? formatDateTime(lastFull) : "未记录";
+  const nextScanText = nextScanAt ? formatDateTime(nextScanAt) : "未计划";
+  const progressText = total > 0
+    ? `本轮已扫 ${processed}/${total} 个一级子目录（${percent}%）`
+    : "本轮无需分片，目录可一次扫完";
+  const stateText = inProgress
+    ? `${mode}${scope}扫描中`
+    : scope === "full"
+      ? `${mode}全量扫描已结束`
+      : `${mode}分片扫描等待下次继续`;
+  return [
+    progressText,
+    `最近全量：${lastFullText}`,
+    `下次自动：${nextScanText}`,
+    stateText,
+  ];
 }
 
 function renderBotApiSettingsSection(settings, { hydrateForm = true } = {}) {
@@ -472,6 +500,12 @@ export function renderSettings() {
             <span class="settings-item-pill">相似度成组：${folder.media_group_filename_similarity ? `开 (${folder.media_group_similarity_threshold || 80}%)` : "关"}</span>
             <span class="settings-item-pill">超限分段：${folder.split_large_video_upload ? "开" : "关"}</span>
             <span class="settings-item-pill">排除目录：${folder.excluded_subdirs?.length ? `${folder.excluded_subdirs.length} 个` : "无"}</span>
+          </div>
+        </section>
+        <section class="settings-item-section">
+          <p class="settings-item-section-title">扫描运行时</p>
+          <div class="settings-item-inline-list">
+            ${formatScanRuntimePill(folder.scan_runtime_status).map((text) => `<span class="settings-item-pill">${escapeHtml(text)}</span>`).join("")}
           </div>
         </section>
         <div class="item-actions">

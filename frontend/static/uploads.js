@@ -254,7 +254,7 @@ function taskSchedulingBanner(task) {
   if (!["smart_skip", "local_rate_limit"].includes(parsed.category)) {
     return "";
   }
-  const label = parsed.category === "smart_skip" ? "智能调度" : "限频状态";
+  const label = parsed.category === "smart_skip" ? "智能调度" : "Bot 冷却中";
   return `<div class="upload-task-banner upload-task-banner-${parsed.category}"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(parsed.message)}</span></div>`;
 }
 
@@ -285,7 +285,7 @@ function taskMetaMarkup(task) {
     ${metaPill("进度", taskCompletionText(task))}
     ${metaPill("模式", task.task_kind === "split_video" ? "视频分段上传" : (isBatchTask(task) ? "媒体组上传" : "单文件上传"))}
     ${metaPill("引擎", taskUploaderLabel(task), "info")}
-    ${task.bot_api_account_id ? metaPill("Bot", taskBotLabel(task), "accent") : ""}
+    ${task.bot_api_account_id ? metaPill("实际 Bot", taskBotLabel(task), "accent") : ""}
   `;
 }
 
@@ -668,7 +668,7 @@ export function showTaskDetail(taskId) {
       <div><strong>目录 ID</strong><p>${escapeHtml(task.folder_id)}</p></div>
       <div><strong>频道 ID</strong><p>${escapeHtml(task.channel_id)}</p></div>
       <div><strong>实际引擎</strong><p>${escapeHtml(taskUploaderLabel(task))}</p></div>
-      <div><strong>Bot</strong><p>${escapeHtml(taskBotLabel(task))}</p></div>
+      <div><strong>实际 Bot</strong><p>${escapeHtml(taskBotLabel(task))}</p></div>
       <details class="detail-block detail-panel" ${task.batch_items?.length ? "open" : ""}>
         <summary>组内文件详情</summary>
         <div class="detail-panel-body">${batchItems}</div>

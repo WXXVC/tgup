@@ -563,6 +563,7 @@ async function handleAction(event) {
     }
     if (action === "scan-folder") {
       await api(`/api/folders/${id}/scan`, { method: "POST", headers: {} });
+      await loadSettings();
       await loadUploads();
       if (state.selectedFolderId === id) {
         await loadFiles(id, false);
@@ -614,6 +615,13 @@ function wireEvents() {
   });
 
   document.getElementById("refresh-all").addEventListener("click", refreshDashboard);
+  document.getElementById("refresh-top-stats").addEventListener("click", async () => {
+    await loadUploadStats();
+    if (state.activeTab === "uploads") {
+      await loadUploads();
+    }
+    pushToast("任务统计已刷新", "success");
+  });
 
   document.getElementById("access-login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -998,7 +1006,7 @@ function wireEvents() {
 
   document.getElementById("file-page-size").addEventListener("change", (event) => {
     const value = Number(event.target.value);
-    state.filePageSize = [10, 20, 50, 100].includes(value) ? value : 10;
+    state.filePageSize = [50, 100, 200, 500].includes(value) ? value : 50;
     state.filePage = 1;
     if (state.selectedFolderId) {
       void loadFiles(state.selectedFolderId, false);
@@ -1053,7 +1061,7 @@ function wireEvents() {
 
   document.getElementById("upload-page-size").addEventListener("change", (event) => {
     const value = Number(event.target.value);
-    state.uploadPageSize = [10, 20, 50, 100].includes(value) ? value : 10;
+    state.uploadPageSize = [50, 100, 200, 500].includes(value) ? value : 50;
     state.uploadPage = 1;
     void loadUploads();
   });
@@ -1061,6 +1069,7 @@ function wireEvents() {
   document.getElementById("browser-scan").addEventListener("click", async () => {
     if (!state.selectedFolderId) return;
     await api(`/api/folders/${state.selectedFolderId}/scan`, { method: "POST", headers: {} });
+    await loadSettings();
     await loadFiles(state.selectedFolderId, false);
     await loadUploads();
     pushToast("当前目录已重新扫描", "success");

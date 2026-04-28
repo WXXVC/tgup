@@ -164,6 +164,9 @@ export function translateUploadError(message = "") {
   if (normalized.includes("限频") && normalized.includes("等待约 ")) {
     return normalized;
   }
+  if (normalized.includes("已延后该任务以便其他 Bot 先行")) {
+    return normalized;
+  }
   if (normalized === "当前 Bot 正在限频，任务暂时后移") {
     return normalized;
   }

@@ -360,6 +360,16 @@ button.ghost.danger-action {
   justify-content: space-between;
 }
 
+.status-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-card-actions .ghost {
+  padding: 6px 10px;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;

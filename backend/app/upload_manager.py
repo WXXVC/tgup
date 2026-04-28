@@ -6,6 +6,7 @@ import re
 import shutil
 import time
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from .file_utils import (
     is_telegram_previewable_video,
 )
 from .models import (
+    BotDispatchMode,
     FolderConfig,
     UploadBatchItem,
     UploadStatus,
@@ -35,6 +37,21 @@ from .upload_repo import UploadRepository
 from .video_splitter import VideoSplitter
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FolderScanRuntime:
+    next_scan_at: float = 0.0
+    in_progress: bool = False
+    current_mode: str = "idle"
+    current_scope: str = "chunked"
+    last_scan_started_at: float = 0.0
+    last_scan_finished_at: float = 0.0
+    last_full_scan_at: float = 0.0
+    total_subdirs: int = 0
+    processed_subdirs: int = 0
+    current_cursor: int = 0
+    chunk_size: int = 0
 
 
 class UploadManager:
@@ -75,8 +92,10 @@ class UploadManager:
         self._channel_locks: dict[str, asyncio.Lock] = {}
         self._manual_task_ids: set[str] = set()
         self._locked_retry_tasks: dict[str, asyncio.Task] = {}
+        self._rate_limited_retry_tasks: dict[str, asyncio.Task] = {}
         self._scan_subdir_cursors: dict[str, int] = {}
         self._scan_jobs_inflight: set[str] = set()
+        self._folder_scan_runtime: dict[str, FolderScanRuntime] = {}
 
     async def start(self) -> None:
         self.video_splitter.cleanup_orphans(self.upload_repo.list_task_ids())
@@ -88,6 +107,8 @@ class UploadManager:
     async def stop(self) -> None:
         for retry_task in list(self._locked_retry_tasks.values()):
             retry_task.cancel()
+        for retry_task in list(self._rate_limited_retry_tasks.values()):
+            retry_task.cancel()
         for task in [self.worker_task, self.scan_task]:
             if task:
                 task.cancel()
@@ -97,6 +118,7 @@ class UploadManager:
 
     async def apply_runtime_settings(self) -> None:
         self._configure_upload_clients()
+        self._sync_scan_runtime_state()
         if not self.worker_task or self.worker_task.done():
             self.worker_task = asyncio.create_task(self._worker())
 
@@ -188,21 +210,7 @@ class UploadManager:
         if folder_id:
             folders = [item for item in folders if item.id == folder_id]
         for folder in folders:
-            if folder.id in self._scan_jobs_inflight:
-                logger.info("trigger_scan skipped_inflight folder_id=%s name=%s", folder.id, folder.name)
-                continue
-            self._scan_jobs_inflight.add(folder.id)
-            try:
-                started_at = time.perf_counter()
-                logger.info("trigger_scan started folder_id=%s name=%s", folder.id, folder.name)
-                await self._scan_folder(folder)
-                elapsed_ms = (time.perf_counter() - started_at) * 1000
-                logger.info("trigger_scan finished folder_id=%s name=%s elapsed_ms=%.1f", folder.id, folder.name, elapsed_ms)
-            except Exception:
-                logger.exception("trigger_scan failed folder_id=%s name=%s", folder.id, folder.name)
-                raise
-            finally:
-                self._scan_jobs_inflight.discard(folder.id)
+            await self._run_scan(folder, full=True, mode="manual")
 
     async def retry_task(self, task_id: str) -> UploadTask:
         task = self.upload_repo.get_task(task_id)
@@ -294,32 +302,112 @@ class UploadManager:
                 ),
             ),
         )
+        self._sync_scan_runtime_state(initial_delay=initial_delay)
         if initial_delay > 0:
             logger.info("scanner_loop initial_delay_seconds=%s", initial_delay)
-            await asyncio.sleep(initial_delay)
         while True:
-            now = time.time()
-            for folder in self.settings_service.settings.folders:
-                if folder.enabled and folder.auto_upload:
-                    await self._scan_folder(folder)
             await self.apply_runtime_settings()
-            elapsed = time.time() - now
-            sleep_for = min(
-                [
-                    item.scan_interval_seconds
-                    for item in self.settings_service.settings.folders
-                ],
-                default=30,
-            )
-            await asyncio.sleep(max(5, sleep_for - elapsed))
+            folders = [
+                item
+                for item in self.settings_service.settings.folders
+                if item.enabled and item.auto_upload
+            ]
+            if not folders:
+                await asyncio.sleep(5)
+                continue
+            now = time.time()
+            due_folders = []
+            for folder in folders:
+                runtime = self._folder_scan_runtime.setdefault(
+                    folder.id, FolderScanRuntime()
+                )
+                if runtime.next_scan_at <= 0:
+                    runtime.next_scan_at = now + max(
+                        5, int(folder.scan_interval_seconds or 30)
+                    )
+                if now >= runtime.next_scan_at:
+                    due_folders.append(folder)
+            if not due_folders:
+                next_due = min(
+                    self._folder_scan_runtime[folder.id].next_scan_at for folder in folders
+                )
+                await asyncio.sleep(max(1, next_due - now))
+                continue
+            for folder in due_folders:
+                await self._run_scan(folder, full=False, mode="auto")
 
-    async def _scan_folder(self, folder: FolderConfig) -> None:
-        pending_paths = await asyncio.to_thread(self._list_pending_paths, folder)
+    async def _run_scan(
+        self,
+        folder: FolderConfig,
+        *,
+        full: bool,
+        mode: str,
+    ) -> None:
+        runtime = self._folder_scan_runtime.setdefault(folder.id, FolderScanRuntime())
+        if folder.id in self._scan_jobs_inflight:
+            logger.info(
+                "%s_scan skipped_inflight folder_id=%s name=%s",
+                mode,
+                folder.id,
+                folder.name,
+            )
+            return
+        self._scan_jobs_inflight.add(folder.id)
+        runtime.in_progress = True
+        runtime.current_mode = mode
+        runtime.current_scope = "full" if full else "chunked"
+        runtime.last_scan_started_at = time.time()
+        try:
+            started_at = time.perf_counter()
+            logger.info(
+                "%s_scan started folder_id=%s name=%s scope=%s",
+                mode,
+                folder.id,
+                folder.name,
+                runtime.current_scope,
+            )
+            await self._scan_folder(folder, full=full)
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
+            logger.info(
+                "%s_scan finished folder_id=%s name=%s scope=%s elapsed_ms=%.1f",
+                mode,
+                folder.id,
+                folder.name,
+                runtime.current_scope,
+                elapsed_ms,
+            )
+        except Exception:
+            logger.exception(
+                "%s_scan failed folder_id=%s name=%s scope=%s",
+                mode,
+                folder.id,
+                folder.name,
+                runtime.current_scope,
+            )
+            raise
+        finally:
+            runtime.in_progress = False
+            runtime.last_scan_finished_at = time.time()
+            runtime.next_scan_at = (
+                runtime.last_scan_finished_at + max(5, int(folder.scan_interval_seconds or 30))
+                if folder.enabled and folder.auto_upload
+                else 0.0
+            )
+            self._scan_jobs_inflight.discard(folder.id)
+
+    async def _scan_folder(self, folder: FolderConfig, *, full: bool = False) -> None:
+        pending_paths = await asyncio.to_thread(
+            self._list_pending_paths_full if full else self._list_pending_paths,
+            folder,
+        )
         if await asyncio.to_thread(
             self._should_recheck_similarity_batches, folder, pending_paths
         ):
             await asyncio.sleep(self.SIMILARITY_RECHECK_SECONDS)
-            pending_paths = await asyncio.to_thread(self._list_pending_paths, folder)
+            pending_paths = await asyncio.to_thread(
+                self._list_pending_paths_full if full else self._list_pending_paths,
+                folder,
+            )
         for lead_path, batch_paths, group_debug in self._build_upload_batches(
             folder, pending_paths, group_by_parent=True
         ):
@@ -456,7 +544,10 @@ class UploadManager:
 
     async def _get_next_schedulable_task(self) -> UploadTask:
         task = await self.queue.get()
-        if not self.settings_service.settings.smart_queue_scheduling_enabled:
+        if (
+            not self.settings_service.settings.smart_queue_scheduling_enabled
+            and self._task_can_send_now(task)
+        ):
             return task
 
         pulled: list[UploadTask] = [task]
@@ -488,9 +579,13 @@ class UploadManager:
         paths = self._resolve_task_paths(folder, task)
         if not paths:
             return True
+        effective_account_id = self._effective_bot_api_account_id(
+            task.channel_id,
+            task.bot_api_account_id,
+        )
         try:
             bot_client = self._resolve_bot_uploader_for_paths(
-                paths, task.bot_api_account_id, task.channel_id
+                paths, effective_account_id, task.channel_id
             )
         except Exception:
             return True
@@ -559,8 +654,18 @@ class UploadManager:
             use_album = len(paths) > 1 and not force_document and all(
                 classify_file(path) in {"video", "image"} for path in paths
             )
-            bot_api_account_id = self._resolve_bot_api_account_id(task.channel_id)
+            bot_api_account_id = self._effective_bot_api_account_id(
+                task.channel_id,
+                task.bot_api_account_id,
+            )
             if bot_api_account_id and bot_api_account_id != task.bot_api_account_id:
+                logger.info(
+                    "task bot reassigned task_id=%s channel_id=%s from=%s to=%s",
+                    task.id,
+                    task.channel_id,
+                    task.bot_api_account_id or "(none)",
+                    bot_api_account_id,
+                )
                 updated = self.upload_repo.update_task(
                     task.id, bot_api_account_id=bot_api_account_id
                 )
@@ -590,18 +695,29 @@ class UploadManager:
                     else:
                         reason_text = "全局限频"
                     wait_message = (
-                        f"local_rate_limit|{reason_text}，等待约 {int(wait_seconds) + 1} 秒"
+                        f"local_rate_limit|{reason_text}，等待约 {int(wait_seconds) + 1} 秒，已延后该任务以便其他 Bot 先行"
                     )
                     self.upload_repo.update_task(
                         task.id,
+                        status=UploadStatus.PENDING,
+                        progress=0,
                         error_message=wait_message,
                         batch_items=self._build_batch_items(
                             self._task_display_items(task),
-                            UploadStatus.UPLOADING,
+                            UploadStatus.PENDING,
                             wait_message,
                             0,
                         ),
                     )
+                    logger.info(
+                        "task delayed by bot cooldown task_id=%s bot_api_account_id=%s wait_seconds=%s reason=%s",
+                        task.id,
+                        task.bot_api_account_id or "(none)",
+                        int(wait_seconds) + 1,
+                        wait_reason,
+                    )
+                    self._schedule_rate_limited_retry(task, int(wait_seconds) + 1)
+                    return
             async with self._channel_lock(task.channel_id):
                 message = await self._send_paths(
                     task.channel_id,
@@ -720,6 +836,35 @@ class UploadManager:
             pass
         finally:
             self._locked_retry_tasks.pop(task_id, None)
+
+    def _schedule_rate_limited_retry(self, task: UploadTask, delay: int) -> None:
+        existing = self._rate_limited_retry_tasks.pop(task.id, None)
+        if existing:
+            existing.cancel()
+        self._rate_limited_retry_tasks[task.id] = asyncio.create_task(
+            self._retry_rate_limited_task_later(task.id, max(1, delay))
+        )
+
+    async def _retry_rate_limited_task_later(self, task_id: str, delay: int) -> None:
+        try:
+            await asyncio.sleep(delay)
+            task = self.upload_repo.get_task(task_id)
+            if not task or task.status != UploadStatus.PENDING:
+                return
+            signature = self._task_signature(
+                task.folder_id,
+                task.batch_paths or [task.relative_path],
+                task.source_relative_path,
+            )
+            if signature not in self.pending_signatures:
+                self.pending_signatures.add(signature)
+                await self.queue.put(task)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            self._rate_limited_retry_tasks.pop(task_id, None)
 
     async def _send_paths(
         self,
@@ -1168,6 +1313,7 @@ class UploadManager:
         return score * 100
 
     def _list_pending_paths(self, folder: FolderConfig) -> list[str]:
+        runtime = self._folder_scan_runtime.setdefault(folder.id, FolderScanRuntime())
         if folder.id not in self._scan_subdir_cursors:
             self._scan_subdir_cursors[folder.id] = self.upload_repo.get_scan_cursor(
                 folder.id
@@ -1183,9 +1329,26 @@ class UploadManager:
         )
         if entries:
             self.upload_repo.upsert_file_index_entries(folder.id, entries)
+            self.scanner.invalidate_file_list_cache(folder.id)
+        processed_subdirs = 0
+        if total_subdirs > 0:
+            effective_cursor = cursor % total_subdirs
+            processed_subdirs = min(
+                total_subdirs,
+                max(0, effective_cursor)
+                + max(0, (next_cursor or 0) - effective_cursor),
+            )
+            if next_cursor == 0:
+                processed_subdirs = total_subdirs
         persisted_cursor = next_cursor if total_subdirs > 0 else 0
         self._scan_subdir_cursors[folder.id] = persisted_cursor
         self.upload_repo.set_scan_cursor(folder.id, persisted_cursor)
+        runtime.total_subdirs = total_subdirs
+        runtime.processed_subdirs = processed_subdirs
+        runtime.current_cursor = persisted_cursor
+        runtime.chunk_size = self.SCAN_SUBDIR_BATCH_SIZE
+        if total_subdirs == 0 or persisted_cursor == 0:
+            runtime.last_full_scan_at = time.time()
         return [
             item.relative_path
             for item in entries
@@ -1194,6 +1357,96 @@ class UploadManager:
                 folder.id, item.relative_path
             )
         ]
+
+    def _list_pending_paths_full(self, folder: FolderConfig) -> list[str]:
+        runtime = self._folder_scan_runtime.setdefault(folder.id, FolderScanRuntime())
+        entries = self.scanner.list_scannable_files(
+            folder.id,
+            folder.path,
+            min_stable_seconds=folder.min_stable_seconds,
+            excluded_subdirs=folder.excluded_subdirs,
+        )
+        if entries:
+            self.upload_repo.upsert_file_index_entries(folder.id, entries)
+        self.scanner.invalidate_file_list_cache(folder.id)
+        self._scan_subdir_cursors[folder.id] = 0
+        self.upload_repo.set_scan_cursor(folder.id, 0)
+        total_subdirs = 0
+        try:
+            root = Path(folder.path)
+            if root.exists() and root.is_dir():
+                excluded = {
+                    item.strip().replace("\\", "/").strip("/")
+                    for item in (folder.excluded_subdirs or [])
+                    if item and item.strip().replace("\\", "/").strip("/")
+                }
+                total_subdirs = sum(
+                    1
+                    for item in root.iterdir()
+                    if item.is_dir()
+                    and not self.scanner._is_excluded(
+                        str(item.relative_to(root)).replace("\\", "/"), excluded
+                    )
+                )
+        except Exception:
+            total_subdirs = 0
+        runtime.total_subdirs = total_subdirs
+        runtime.processed_subdirs = total_subdirs
+        runtime.current_cursor = 0
+        runtime.chunk_size = self.SCAN_SUBDIR_BATCH_SIZE
+        runtime.last_full_scan_at = time.time()
+        return [
+            item.relative_path
+            for item in entries
+            if item.status == UploadStatus.PENDING
+            and not self.upload_repo.has_active_task_for_file(
+                folder.id, item.relative_path
+            )
+        ]
+
+    def _sync_scan_runtime_state(self, initial_delay: int | None = None) -> None:
+        folders = {item.id: item for item in self.settings_service.settings.folders}
+        for folder_id in list(self._folder_scan_runtime):
+            if folder_id not in folders:
+                self._folder_scan_runtime.pop(folder_id, None)
+                self._scan_subdir_cursors.pop(folder_id, None)
+        now = time.time()
+        for folder in folders.values():
+            runtime = self._folder_scan_runtime.setdefault(folder.id, FolderScanRuntime())
+            if runtime.current_cursor <= 0 and folder.id in self._scan_subdir_cursors:
+                runtime.current_cursor = self._scan_subdir_cursors.get(folder.id, 0)
+            if folder.enabled and folder.auto_upload:
+                if runtime.next_scan_at <= 0:
+                    delay = (
+                        min(initial_delay, max(5, int(folder.scan_interval_seconds or 30)))
+                        if initial_delay is not None
+                        else max(5, int(folder.scan_interval_seconds or 30))
+                    )
+                    runtime.next_scan_at = now + delay
+            else:
+                runtime.next_scan_at = 0.0
+
+    def get_scan_status(
+        self,
+        folder_id: str,
+        *,
+        scan_interval_seconds: int = 0,
+    ) -> dict[str, object]:
+        runtime = self._folder_scan_runtime.get(folder_id, FolderScanRuntime())
+        return {
+            "next_scan_at": float(runtime.next_scan_at or 0.0),
+            "in_progress": bool(runtime.in_progress),
+            "mode": runtime.current_mode or "idle",
+            "scope": runtime.current_scope or "chunked",
+            "last_scan_started_at": float(runtime.last_scan_started_at or 0.0),
+            "last_scan_finished_at": float(runtime.last_scan_finished_at or 0.0),
+            "last_full_scan_at": float(runtime.last_full_scan_at or 0.0),
+            "total_subdirs": int(runtime.total_subdirs or 0),
+            "processed_subdirs": int(runtime.processed_subdirs or 0),
+            "current_cursor": int(runtime.current_cursor or 0),
+            "chunk_size": int(runtime.chunk_size or self.SCAN_SUBDIR_BATCH_SIZE),
+            "scan_interval_seconds": int(scan_interval_seconds or 0),
+        }
 
     def _should_recheck_similarity_batches(
         self, folder: FolderConfig, relative_paths: list[str]
@@ -1295,6 +1548,17 @@ class UploadManager:
             )
         except Exception:
             return ""
+
+    def _effective_bot_api_account_id(
+        self,
+        channel_id: str,
+        current_account_id: str = "",
+    ) -> str:
+        dispatch_mode = self.settings_service.settings.bot_dispatch_mode
+        if dispatch_mode == BotDispatchMode.ROUND_ROBIN or not current_account_id:
+            next_account_id = self._resolve_bot_api_account_id(channel_id)
+            return next_account_id or current_account_id
+        return current_account_id
 
     def _resolve_bot_uploader_for_paths(
         self,
